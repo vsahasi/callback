@@ -43,6 +43,9 @@ image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "fastapi>=0.115",
+        "httpx>=0.27",
+        # detector/analysis needs this on the serving path.
+        "numpy>=1.26",
         "pydantic>=2.9",
         "uvicorn[standard]>=0.32",
     )

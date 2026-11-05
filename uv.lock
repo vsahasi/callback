@@ -108,6 +108,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "numpy" },
     { name = "pydantic" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -122,7 +123,6 @@ dev = [
     { name = "ruff" },
 ]
 train = [
-    { name = "numpy" },
     { name = "soundfile" },
     { name = "torch" },
 ]
@@ -132,7 +132,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "modal", marker = "extra == 'deploy'", specifier = ">=1.0" },
-    { name = "numpy", marker = "extra == 'train'", specifier = ">=1.26" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
