@@ -18,9 +18,17 @@ Optional overrides, same secret or env:
     CALLBACK_MOCK_JITTER_MIN_MS        default 150
     CALLBACK_MOCK_JITTER_MAX_MS        default 400
 
-Pinned to a single container (min_containers=1, max_containers=1) because
-session state lives in process memory. Do not raise max_containers before
-SessionStore is backed by Redis or a Modal Dict.
+Pinned to a single container (min_containers=1, max_containers=1) because the
+default SessionStore keeps sessions in process memory, so the same call routed
+to two containers would become two unrelated sessions, each with its own OTP
+attempt budget.
+
+detector/store.py now has the seam to lift that pin: ModalDictSessionStore
+shares sessions across replicas. Before raising max_containers, read its
+docstring on the residual race. modal.Dict has no compare-and-swap, so a lease
+stolen at the wrong moment can lose one update. A monotonic guard keeps the
+cost to one extra OTP attempt recorded, never a fabricated allow, but it is a
+real trade and should be a deliberate decision rather than a config tweak.
 
 Run it locally instead, no Modal account needed:
 
@@ -46,7 +54,14 @@ app = modal.App("callback-detector")
 
 @app.function(
     image=image,
-    secrets=[modal.Secret.from_name("callback-detector")],
+    secrets=[
+        # required_keys turns a secret that exists but lacks the token into a
+        # clear deploy-time error, rather than a container that boots healthy
+        # and then rejects every request against a generated token.
+        modal.Secret.from_name(
+            "callback-detector", required_keys=["CALLBACK_API_TOKEN"]
+        )
+    ],
     min_containers=1,
     max_containers=1,
     timeout=60 * 10,

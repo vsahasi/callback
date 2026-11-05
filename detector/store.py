@@ -398,22 +398,30 @@ class StoreLimits:
     def from_settings(cls, settings: Settings, **overrides: Any) -> StoreLimits:
         """Derive limits from the service settings.
 
-        Only the TTL comes from `Settings` today. The grace period and the
-        cache ceiling are constructor arguments with the defaults above,
-        because giving them env knobs means adding fields to `Settings`, and
-        they belong there rather than being read out of os.environ behind
-        config.py's back. Suggested names when that happens:
+        All three now come from `Settings`: CALLBACK_SESSION_TTL_SECONDS,
         CALLBACK_SESSION_EVICTION_GRACE_SECONDS and
-        CALLBACK_MAX_CACHED_RESPONSES.
+        CALLBACK_MAX_CACHED_RESPONSES. The latter two treat 0 as "derive it",
+        so the defaults above stay the behaviour unless somebody deliberately
+        overrides them.
 
-        The grace period is floored at the TTL, so retention is never less than
-        twice the TTL no matter how the TTL is configured.
+        The grace period is floored at both the TTL and the module minimum
+        whatever is configured, so retention is never less than twice the TTL.
+        A misconfiguration cannot shrink retention into the window where
+        evicting a live session would hand a caller a fresh OTP budget.
         """
 
         ttl = max(0, int(settings.session_ttl_seconds))
+        configured_grace = max(
+            0, int(getattr(settings, "session_eviction_grace_seconds", 0))
+        )
+        # Floored at the TTL and at the module minimum, so a small or zero
+        # override cannot shorten retention below what is safe to evict.
+        grace = max(configured_grace, ttl, MIN_EVICTION_GRACE_SECONDS)
+        configured_cache = max(0, int(getattr(settings, "max_cached_responses", 0)))
         resolved: dict[str, Any] = {
             "session_ttl_seconds": ttl,
-            "eviction_grace_seconds": max(ttl, MIN_EVICTION_GRACE_SECONDS),
+            "eviction_grace_seconds": grace,
+            "max_cached_responses": configured_cache or DEFAULT_MAX_CACHED_RESPONSES,
         }
         resolved.update(overrides)
         return cls(**resolved)

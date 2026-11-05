@@ -39,6 +39,14 @@ class Settings:
     # generated. The service then refuses every caller, which is the safe
     # direction: a misnamed or empty secret must not leave the detector open.
     api_token_generated: bool = False
+    # Extra idle time, on top of the TTL, before a session may be
+    # evicted. 0 means derive it from the TTL, which is the safe
+    # default: retention then stays at least twice the TTL however
+    # the TTL is configured.
+    session_eviction_grace_seconds: int = 0
+    # Ceiling on a session idempotency cache. 0 means use the
+    # store default.
+    max_cached_responses: int = 0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -67,4 +75,8 @@ class Settings:
             speech_segments_before_decision=_env_int(
                 "CALLBACK_SPEECH_SEGMENTS_BEFORE_DECISION", 2
             ),
+            session_eviction_grace_seconds=_env_int(
+                "CALLBACK_SESSION_EVICTION_GRACE_SECONDS", 0
+            ),
+            max_cached_responses=_env_int("CALLBACK_MAX_CACHED_RESPONSES", 0),
         )
