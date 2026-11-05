@@ -6,14 +6,14 @@ expose, so they build their own app rather than using the shared client fixture.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 
 from detector.app import create_app
 from detector.config import Settings
-from shared.contract import SCENARIO_HEADER, MOCK_OTP_CODE, Scenario
+from shared.contract import MOCK_OTP_CODE, SCENARIO_HEADER, Scenario
 
 TOKEN = "otp-edge-token"
 
@@ -36,7 +36,7 @@ def body(session_id: str, event: str, sequence: int, otp: str | None = None) -> 
         "session_id": session_id,
         "event": event,
         "sequence": sequence,
-        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "occurred_at": datetime.now(UTC).isoformat(),
         "metadata": {},
     }
     if otp is not None:
@@ -143,7 +143,7 @@ def test_expired_session_fails_closed() -> None:
             session_id=session_id,
             event=event,
             sequence=sequence,
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             metadata={},
         )
 

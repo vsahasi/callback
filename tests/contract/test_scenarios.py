@@ -6,7 +6,7 @@ and CALLBACK_API_TOKEN to point them at a deployment.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -209,7 +209,7 @@ async def test_unknown_scenario_header_is_rejected(
             "session_id": new_session_id(),
             "event": EventType.SESSION_START.value,
             "sequence": 1,
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "occurred_at": datetime.now(UTC).isoformat(),
             "metadata": {},
         },
         headers={SCENARIO_HEADER: "not_a_real_scenario"},

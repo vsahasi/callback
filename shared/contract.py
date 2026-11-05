@@ -165,7 +165,9 @@ class EventRequest(StrictModel):
 
     session_id: str = Field(min_length=8, max_length=128)
     event: EventType
-    sequence: int = Field(ge=0, description="Monotonic per session. Replays are idempotent.")
+    sequence: int = Field(
+        ge=0, description="Monotonic per session. Replays are idempotent."
+    )
     occurred_at: datetime
     claimed_user_id: str | None = Field(
         default=None,

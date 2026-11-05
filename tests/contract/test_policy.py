@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -76,7 +76,7 @@ async def test_unknown_field_is_rejected(client: httpx.AsyncClient) -> None:
             "session_id": new_session_id(),
             "event": "session_start",
             "sequence": 1,
-            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "occurred_at": datetime.now(UTC).isoformat(),
             "claimed_user_idd": "typo",
         },
         headers={SCENARIO_HEADER: Scenario.REAL_CFO.value},
@@ -219,7 +219,9 @@ def _client_with(transport: httpx.MockTransport) -> DetectorClient:
         base_url="http://detector.test",
         headers={"Authorization": f"Bearer {TEST_TOKEN}"},
     )
-    return DetectorClient(base_url="http://detector.test", token=TEST_TOKEN, client=http)
+    return DetectorClient(
+        base_url="http://detector.test", token=TEST_TOKEN, client=http
+    )
 
 
 async def test_timeout_is_treated_as_deny() -> None:
@@ -360,7 +362,7 @@ def test_otp_blending_matches_the_explicit_helper() -> None:
     rescaled = [f.model_copy(deep=True) for f in behavioural]
     for factor in rescaled:
         factor.weight = factor.weight * (1.0 - scoring.OTP_WEIGHT)
-    rescaled_blend = scoring.blend_risk(rescaled + [otp_pass])
+    rescaled_blend = scoring.blend_risk([*rescaled, otp_pass])
 
     assert rescaled_blend == pytest.approx(closed_form, abs=1e-9)
 
