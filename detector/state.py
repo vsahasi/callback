@@ -1,18 +1,23 @@
 """Session state machine, idempotency and OTP policy.
 
-In-memory on purpose: Day-1 serving is a single Modal container
-(min_containers=1, max_containers=1), so one process owns every session. Moving
-to more than one replica means swapping SessionStore for Redis or a Modal Dict,
-and nothing above this module needs to change.
+Session storage lives behind the `SessionStore` interface in `detector.store`.
+The default backend is `InMemorySessionStore`, which is process-local and
+therefore single-replica; `ModalDictSessionStore` puts the same sessions in a
+`modal.Dict` so the service can run on more than one container. Nothing in this
+module knows which one it is talking to.
+
+The engine mutates a session and then raises on every fail-closed path (TTL
+expiry, a spent OTP attempt, an exhausted challenge). `SessionStore.update()`
+commits on the way out of those raises, so a session that has been denied stays
+denied no matter which replica handled the event. Read the `detector.store`
+module docstring for the guarantee each backend actually provides.
 """
 
 from __future__ import annotations
 
 import hashlib
 import secrets
-import threading
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from detector import scoring
 from detector.config import Settings
@@ -21,10 +26,17 @@ from detector.errors import (
     OtpExhausted,
     OtpExpired,
     SequenceConflict,
-    SessionNotFound,
     SessionTerminal,
 )
 from detector.mock import SCRIPTS, resolve_scenario
+from detector.store import (
+    CachedResponse,
+    InMemorySessionStore,
+    OtpState,
+    Session,
+    SessionStore,
+    StoreLimits,
+)
 from shared.contract import (
     MOCK_OTP_CODE,
     Decision,
@@ -36,14 +48,23 @@ from shared.contract import (
     FactorsResponse,
     FactorVerdict,
     NextAction,
-    OtpChallenge,
-    Scenario,
     SessionState,
 )
 
+# Re-exported so `from detector.state import Session` keeps working for anyone
+# who already imports it from here.
+__all__ = [
+    "CachedResponse",
+    "DetectorEngine",
+    "InMemorySessionStore",
+    "OtpState",
+    "Session",
+    "SessionStore",
+]
+
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _fingerprint(request: EventRequest) -> str:
@@ -52,91 +73,19 @@ def _fingerprint(request: EventRequest) -> str:
     ).hexdigest()
 
 
-@dataclass
-class OtpState:
-    code: str
-    attempts_used: int
-    expires_at: datetime
-    resolved: bool | None = None
-
-    def challenge(self, max_attempts: int) -> OtpChallenge:
-        return OtpChallenge(
-            code_length=len(self.code),
-            attempts_used=self.attempts_used,
-            attempts_remaining=max(0, max_attempts - self.attempts_used),
-            expires_at=self.expires_at,
-        )
-
-
-@dataclass
-class Session:
-    session_id: str
-    scenario: Scenario
-    scenario_source: str
-    created_at: datetime
-    updated_at: datetime
-    state: SessionState = SessionState.CREATED
-    claimed_user_id: str | None = None
-    events_seen: int = 0
-    speech_segments: int = 0
-    max_sequence: int = -1
-    factors: list[Factor] = field(default_factory=list)
-    risk_score: float = 0.0
-    confidence: float = 0.0
-    decision: Decision = Decision.PENDING
-    next_action: NextAction = NextAction.CONTINUE_LISTENING
-    reason: str | None = None
-    otp: OtpState | None = None
-    # idempotency key -> (request fingerprint, stored response)
-    responses: dict[str, tuple[str, EventResponse]] = field(default_factory=dict)
-
-
-class SessionStore:
-    """Thread-safe in-memory session map."""
-
-    def __init__(self) -> None:
-        self._sessions: dict[str, Session] = {}
-        self._lock = threading.Lock()
-
-    def get(self, session_id: str) -> Session:
-        with self._lock:
-            session = self._sessions.get(session_id)
-        if session is None:
-            raise SessionNotFound(f"no session {session_id!r}")
-        return session
-
-    def get_or_create(
-        self, session_id: str, scenario: Scenario, scenario_source: str
-    ) -> Session:
-        with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None:
-                now = _now()
-                session = Session(
-                    session_id=session_id,
-                    scenario=scenario,
-                    scenario_source=scenario_source,
-                    created_at=now,
-                    updated_at=now,
-                )
-                self._sessions[session_id] = session
-            return session
-
-    def clear(self) -> None:
-        with self._lock:
-            self._sessions.clear()
-
-    def __len__(self) -> int:
-        with self._lock:
-            return len(self._sessions)
-
-
 class DetectorEngine:
     """Applies events to sessions and produces contract responses."""
 
     def __init__(self, settings: Settings, store: SessionStore | None = None) -> None:
         self.settings = settings
-        self.store = store or SessionStore()
+        # `store if store is not None`, never `store or ...`: a SessionStore
+        # defines __len__, so an empty one is falsy and `or` would silently
+        # swap an injected store for a private in-memory one.
+        self.store = (
+            store
+            if store is not None
+            else InMemorySessionStore(StoreLimits.from_settings(settings))
+        )
 
     # ---------------------------------------------------------------- events
 
@@ -148,53 +97,91 @@ class DetectorEngine:
         idempotency_key: str | None,
     ) -> EventResponse:
         try:
-            scenario, source = resolve_scenario(scenario_header, request.claimed_user_id)
+            scenario, source = resolve_scenario(
+                scenario_header, request.claimed_user_id
+            )
         except ValueError as exc:
             raise InvalidScenario(str(exc)) from exc
-
-        session = self.store.get_or_create(request.session_id, scenario, source)
-
-        # An explicit header on a later event re-pins the scenario, so a fixture
-        # can drive one session through a specific script end to end.
-        if scenario_header:
-            session.scenario = scenario
-            session.scenario_source = source
 
         cache_key = idempotency_key or f"seq:{request.sequence}"
         fingerprint = _fingerprint(request)
 
-        cached = session.responses.get(cache_key)
-        if cached is not None:
-            stored_fingerprint, stored_response = cached
-            if stored_fingerprint != fingerprint:
-                raise SequenceConflict(
-                    f"idempotency key {cache_key!r} was already used with a "
-                    "different payload"
+        def apply(session: Session) -> EventResponse:
+            """One read-modify-write of this session.
+
+            The store may replay this against fresher state if it loses a
+            commit race, so it reads everything it needs from `session` and
+            keeps no state of its own. Replaying is also the behaviour we want:
+            a retry re-checks the idempotency cache and the sequence guard
+            against whatever another replica has already committed.
+            """
+
+            # An explicit header on a later event re-pins the scenario, so a
+            # fixture can drive one session through a specific script end to end.
+            if scenario_header:
+                session.scenario = scenario
+                session.scenario_source = source
+
+            # Expiry is settled before the idempotency cache is consulted, not
+            # after. Two things depend on that order.
+            #
+            # Checking it first is what stops a response cached while the call
+            # was live from staying replayable after the call is over. Note that
+            # _expire_if_due deliberately leaves a terminal session alone, so an
+            # ALLOWED session never becomes EXPIRED and the state check alone
+            # would not catch it: the guard below is written against the
+            # session's age, which covers both. Without it, an identical replay
+            # of a successful payload kept answering `allow` for as long as the
+            # record survived.
+            self._expire_if_due(session)
+
+            if self._past_ttl(session) and request.event is not EventType.SESSION_END:
+                raise SessionTerminal(
+                    f"session is {session.state.value} and older than its "
+                    f"{self.settings.session_ttl_seconds}s time to live; it "
+                    "accepts no further events, cached replies included"
                 )
-            return stored_response.model_copy(update={"idempotent_replay": True})
 
-        if request.sequence <= session.max_sequence:
-            raise SequenceConflict(
-                f"sequence {request.sequence} is not greater than the last "
-                f"accepted sequence {session.max_sequence}"
+            cached = session.responses.get(cache_key)
+            if cached is not None:
+                if cached.fingerprint != fingerprint:
+                    raise SequenceConflict(
+                        f"idempotency key {cache_key!r} was already used with a "
+                        "different payload"
+                    )
+                return cached.response.model_copy(update={"idempotent_replay": True})
+
+            if request.sequence <= session.max_sequence:
+                raise SequenceConflict(
+                    f"sequence {request.sequence} is not greater than the last "
+                    f"accepted sequence {session.max_sequence}"
+                )
+
+            if session.state.is_terminal and request.event is not EventType.SESSION_END:
+                raise SessionTerminal(
+                    f"session is {session.state.value} and accepts no further events"
+                )
+
+            self._apply(session, request)
+
+            session.events_seen += 1
+            session.max_sequence = request.sequence
+            session.updated_at = _now()
+
+            response = self._event_response(session, request.sequence)
+            session.responses[cache_key] = CachedResponse(
+                fingerprint=fingerprint,
+                response=response,
+                cached_at=session.updated_at,
             )
+            return response
 
-        self._expire_if_due(session)
-
-        if session.state.is_terminal and request.event is not EventType.SESSION_END:
-            raise SessionTerminal(
-                f"session is {session.state.value} and accepts no further events"
-            )
-
-        self._apply(session, request)
-
-        session.events_seen += 1
-        session.max_sequence = request.sequence
-        session.updated_at = _now()
-
-        response = self._event_response(session, request.sequence)
-        session.responses[cache_key] = (fingerprint, response)
-        return response
+        return self.store.update(
+            request.session_id,
+            apply,
+            scenario=scenario,
+            scenario_source=source,
+        )
 
     # ------------------------------------------------------------ transitions
 
@@ -204,6 +191,12 @@ class DetectorEngine:
 
         match request.event:
             case EventType.SESSION_START:
+                if session.state is not SessionState.CREATED:
+                    # A reconnecting agent may re-send session_start. It must
+                    # not move the session backwards: doing so cleared an
+                    # outstanding step-up and reported continue_listening for
+                    # a caller that had already failed voice analysis.
+                    return
                 session.state = SessionState.LISTENING
                 session.decision = Decision.PENDING
                 session.next_action = NextAction.CONTINUE_LISTENING
@@ -225,9 +218,16 @@ class DetectorEngine:
                     session.state = SessionState.LISTENING
                 session.speech_segments += 1
                 if session.state is SessionState.CHALLENGING:
-                    # Already stepped up. More speech does not change the gate.
+                    # Keep analysing. Discarding speech here left the factor
+                    # list empty, so a correct code could be accepted on a
+                    # session whose voice was never examined. A fatal signal
+                    # arriving now still denies outright.
+                    self._record_evidence(session)
                     return
-                if session.speech_segments < self.settings.speech_segments_before_decision:
+                if (
+                    session.speech_segments
+                    < self.settings.speech_segments_before_decision
+                ):
                     session.decision = Decision.PENDING
                     session.next_action = NextAction.CONTINUE_LISTENING
                     session.reason = (
@@ -290,6 +290,31 @@ class DetectorEngine:
             self._issue_otp(session)
             session.reason = script.reason
 
+    def _record_evidence(self, session: Session) -> None:
+        """Populate factors while a step-up is already open.
+
+        Evidence must not be discarded just because a challenge is
+        outstanding. A fatal signal arriving now denies outright, and a correct
+        code later has to be judged against real analysis rather than an empty
+        factor list.
+        """
+
+        script = SCRIPTS[session.scenario]
+        factors = script.factor_list()
+        session.confidence = script.confidence
+        session.factors = factors
+        session.risk_score = scoring.blend_risk(factors)
+
+        fatal = scoring.fatal_factor(factors)
+        if fatal is not None:
+            session.state = SessionState.DENIED
+            session.decision = Decision.DENY
+            session.next_action = NextAction.COMPLETE_DENY
+            session.reason = (
+                f"{fatal.name.value} is unambiguous attack evidence "
+                f"(score {fatal.score:.2f}). {script.reason}"
+            )
+
     # ------------------------------------------------------------------- OTP
 
     def _issue_otp(self, session: Session) -> None:
@@ -315,9 +340,7 @@ class DetectorEngine:
 
     def _verify_otp(self, session: Session, submitted: str | None) -> None:
         if session.state is not SessionState.CHALLENGING or session.otp is None:
-            raise SessionTerminal(
-                "no active OTP challenge; send otp_request first"
-            )
+            raise SessionTerminal("no active OTP challenge; send otp_request first")
 
         otp = session.otp
         now = _now()
@@ -345,9 +368,49 @@ class DetectorEngine:
                 verdict=FactorVerdict.PASS,
                 detail=f"Correct code on attempt {otp.attempts_used}.",
             )
-            factors = behavioural + [otp_factor]
+            factors = [*behavioural, otp_factor]
             session.factors = factors
             session.risk_score = scoring.blend_risk(factors)
+
+            # A correct code moves the score; it does not override policy.
+            # This used to set ALLOW unconditionally, ignoring the
+            # fatal-factor rule, ignoring scenarios that must never be
+            # rescued, and ignoring the score it had just computed. Combined
+            # with speech being discarded while CHALLENGING, that allowed a
+            # replay attack through on an empty factor list.
+            script = SCRIPTS[session.scenario]
+            fatal = scoring.fatal_factor(behavioural)
+            refusal: str | None = None
+            if not behavioural:
+                refusal = (
+                    "No voice analysis was performed, so a correct code alone "
+                    "cannot verify this caller."
+                )
+            elif fatal is not None:
+                refusal = (
+                    f"{fatal.name.value} is unambiguous attack evidence "
+                    f"(score {fatal.score:.2f}), which a correct code does "
+                    "not rescue."
+                )
+            elif not script.otp_can_rescue:
+                refusal = script.reason
+            elif (
+                scoring.decide(session.risk_score, otp_available=False)
+                is not Decision.ALLOW
+            ):
+                refusal = (
+                    "Step-up passed but blended risk "
+                    f"{session.risk_score:.3f} is still above the allow "
+                    "threshold."
+                )
+
+            if refusal is not None:
+                session.state = SessionState.DENIED
+                session.decision = Decision.DENY
+                session.next_action = NextAction.COMPLETE_DENY
+                session.reason = refusal
+                return
+
             session.state = SessionState.ALLOWED
             session.decision = Decision.ALLOW
             session.next_action = NextAction.COMPLETE_ALLOW
@@ -361,9 +424,7 @@ class DetectorEngine:
                 factor.weight = factor.weight / (1.0 - scoring.OTP_WEIGHT)
             session.decision = Decision.CHALLENGE
             session.next_action = NextAction.REQUEST_OTP
-            session.reason = (
-                f"Incorrect code. {remaining} attempt(s) remaining."
-            )
+            session.reason = f"Incorrect code. {remaining} attempt(s) remaining."
             return
 
         otp.resolved = False
@@ -374,7 +435,7 @@ class DetectorEngine:
             verdict=FactorVerdict.FAIL,
             detail=f"All {otp.attempts_used} attempts incorrect.",
         )
-        factors = behavioural + [otp_factor]
+        factors = [*behavioural, otp_factor]
         session.factors = factors
         session.risk_score = scoring.blend_risk(factors)
         session.state = SessionState.DENIED
@@ -390,11 +451,21 @@ class DetectorEngine:
 
     # -------------------------------------------------------------- lifetime
 
+    def _past_ttl(self, session: Session, now: datetime | None = None) -> bool:
+        """Whether this session has outlived its configured time to live.
+
+        Deliberately independent of `state`: a session that reached a terminal
+        decision still ages, and `handle_event` uses that to stop serving its
+        cached responses once the call is over.
+        """
+
+        age = ((now or _now()) - session.created_at).total_seconds()
+        return age > self.settings.session_ttl_seconds
+
     def _expire_if_due(self, session: Session) -> None:
         if session.state.is_terminal:
             return
-        age = (_now() - session.created_at).total_seconds()
-        if age > self.settings.session_ttl_seconds:
+        if self._past_ttl(session):
             session.state = SessionState.EXPIRED
             session.decision = Decision.DENY
             session.next_action = NextAction.COMPLETE_DENY
@@ -422,25 +493,30 @@ class DetectorEngine:
         )
 
     def factors_for(self, session_id: str) -> FactorsResponse:
-        session = self.store.get(session_id)
-        self._expire_if_due(session)
-        return FactorsResponse(
-            session_id=session.session_id,
-            state=session.state,
-            decision=session.decision,
-            risk_score=session.risk_score,
-            confidence=session.confidence,
-            factors=[f.model_copy(deep=True) for f in session.factors],
-            next_action=session.next_action,
-            reason=session.reason,
-            scenario=session.scenario if self.settings.mock_mode else None,
-            created_at=session.created_at,
-            updated_at=session.updated_at,
-            events_seen=session.events_seen,
-            otp=session.otp.challenge(self.settings.otp_max_attempts)
-            if session.otp
-            else None,
-        )
+        def apply(session: Session) -> FactorsResponse:
+            # Goes through update() rather than get() because _expire_if_due can
+            # move the session to EXPIRED/DENY, and a read that notices a
+            # session has died must make that durable.
+            self._expire_if_due(session)
+            return FactorsResponse(
+                session_id=session.session_id,
+                state=session.state,
+                decision=session.decision,
+                risk_score=session.risk_score,
+                confidence=session.confidence,
+                factors=[f.model_copy(deep=True) for f in session.factors],
+                next_action=session.next_action,
+                reason=session.reason,
+                scenario=session.scenario if self.settings.mock_mode else None,
+                created_at=session.created_at,
+                updated_at=session.updated_at,
+                events_seen=session.events_seen,
+                otp=session.otp.challenge(self.settings.otp_max_attempts)
+                if session.otp
+                else None,
+            )
+
+        return self.store.update(session_id, apply)
 
 
 def _random_code(length: int = 6) -> str:
