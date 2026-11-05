@@ -273,6 +273,14 @@ class DetectorEngine:
         risk = scoring.blend_risk(factors)
         decision = scoring.decide(risk, otp_available=script.otp_can_rescue)
 
+        # A failing signal is never waved through on a good average. Weights
+        # are renormalised over whichever detectors produced a score, so one
+        # FAIL can be diluted below the allow threshold by passing factors
+        # around it. Step up where that is possible, refuse where it is not.
+        failing = scoring.first_failing_factor(factors)
+        if decision is Decision.ALLOW and failing is not None:
+            decision = Decision.CHALLENGE if script.otp_can_rescue else Decision.DENY
+
         session.factors = factors
         session.risk_score = risk
 

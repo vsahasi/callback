@@ -559,3 +559,128 @@ async def test_validation_detail_still_identifies_the_field() -> None:
     detail = response.json()["error"]["detail"] or ""
     assert "session_id" in detail, detail
     assert "short" not in detail, detail
+
+
+# ------------------- a failing factor is never diluted into an allow
+
+
+def _diluted_fail_script():
+    """A factor set whose blended risk says allow while one signal failed.
+
+    This is the real shape the analysis engine can produce: when no enrolment
+    reference and no call metadata are supplied, only three of five detectors
+    run, so weights are renormalised and `replay` carries roughly twice its
+    nominal share. A replay just above the fatal threshold, surrounded by
+    passing signals, blends to under the allow threshold.
+    """
+
+    from detector.mock import ScenarioScript
+
+    factors = (
+        Factor(
+            name=FactorName.REPLAY,
+            score=0.12,  # above FATAL_THRESHOLD (0.10), so not a hard deny
+            weight=0.30,
+            verdict=FactorVerdict.FAIL,
+            detail="Two replay cues fired weakly.",
+        ),
+        Factor(
+            name=FactorName.SYNTHETIC_SPEECH,
+            score=1.0,
+            weight=0.35,
+            verdict=FactorVerdict.PASS,
+            detail="No synthesis artefacts.",
+        ),
+        Factor(
+            name=FactorName.LIVENESS,
+            score=1.0,
+            weight=0.35,
+            verdict=FactorVerdict.PASS,
+            detail="Breath and micro-prosody present.",
+        ),
+    )
+    return ScenarioScript(
+        scenario=Scenario.REAL_CFO,
+        factors=factors,
+        confidence=0.7,
+        reason="Crafted: one weak replay signal among passing ones.",
+        otp_can_rescue=True,
+    )
+
+
+def test_the_blend_alone_would_have_allowed_it() -> None:
+    """Establishes that the guard is load-bearing, not decoration."""
+
+    factors = list(_diluted_fail_script().factors)
+    risk = scoring.blend_risk(factors)
+
+    assert risk < scoring.ALLOW_BELOW, risk
+    assert scoring.decide(risk) is Decision.ALLOW
+    assert scoring.fatal_factor(factors) is None, "must not be a hard deny"
+    assert scoring.first_failing_factor(factors) is not None
+
+
+async def test_a_diluted_failing_factor_is_not_allowed(monkeypatch) -> None:
+    """End to end: a FAIL never becomes an allow, however good the average."""
+
+    from detector import state as state_module
+
+    script = _diluted_fail_script()
+    monkeypatch.setitem(state_module.SCRIPTS, Scenario.REAL_CFO, script)
+
+    async with client_for(settings_with()) as c:
+        response = await _drive(
+            c,
+            "hardening-diluted-fail-1",
+            Scenario.REAL_CFO,
+            [
+                ("session_start", None),
+                ("speech_segment", None),
+                ("speech_segment", None),
+            ],
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["decision"] != Decision.ALLOW.value, body
+    assert body["decision"] == Decision.CHALLENGE.value, body
+    assert body["risk_score"] < scoring.ALLOW_BELOW, body
+
+
+async def test_a_diluted_fail_denies_when_step_up_is_unavailable(
+    monkeypatch,
+) -> None:
+    """With no OTP path the same case must refuse rather than loop."""
+
+    from dataclasses import replace
+
+    from detector import state as state_module
+
+    script = replace(_diluted_fail_script(), otp_can_rescue=False)
+    monkeypatch.setitem(state_module.SCRIPTS, Scenario.REAL_CFO, script)
+
+    async with client_for(settings_with()) as c:
+        response = await _drive(
+            c,
+            "hardening-diluted-fail-2",
+            Scenario.REAL_CFO,
+            [
+                ("session_start", None),
+                ("speech_segment", None),
+                ("speech_segment", None),
+            ],
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["decision"] == Decision.DENY.value, body
+
+
+def test_all_passing_factors_still_allow() -> None:
+    """The guard must not make a clean call unverifiable."""
+
+    from detector.mock import SCRIPTS
+
+    clean = SCRIPTS[Scenario.REAL_CFO].factor_list()
+    assert scoring.first_failing_factor(clean) is None
+    assert scoring.decide(scoring.blend_risk(clean)) is Decision.ALLOW

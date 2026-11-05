@@ -53,6 +53,27 @@ def blend_risk_with_otp(behavioural: list[Factor], otp_factor: Factor) -> float:
     return _clamp((1.0 - OTP_WEIGHT) * base + OTP_WEIGHT * otp_risk)
 
 
+def first_failing_factor(factors: list[Factor]) -> Factor | None:
+    """The first factor that outright failed, if any.
+
+    Distinct from `fatal_factor`, which is about two specific signals being
+    unambiguous attack evidence. This is weaker and broader: any detector
+    saying FAIL means something is wrong, and a wrong-looking call must not be
+    waved through just because the weighted average came out low.
+
+    That matters most when only some detectors ran. Weights are renormalised
+    over the factors that produced a score, so a single failing signal can be
+    diluted below the allow threshold by a handful of passing ones, or
+    conversely carry far more weight than its nominal share. Neither should be
+    able to turn a FAIL into an allow.
+    """
+
+    for factor in factors:
+        if factor.verdict is FactorVerdict.FAIL:
+            return factor
+    return None
+
+
 def fatal_factor(factors: list[Factor]) -> Factor | None:
     """The first unambiguous-attack factor, if any tripped."""
 
