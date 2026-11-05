@@ -45,6 +45,7 @@ def _f(
     return Factor(name=name, score=score, weight=weight, verdict=verdict, detail=detail)
 
 
+# fmt: off
 SCRIPTS: dict[Scenario, ScenarioScript] = {
     Scenario.REAL_CFO: ScenarioScript(
         scenario=Scenario.REAL_CFO,
@@ -137,6 +138,7 @@ SCRIPTS: dict[Scenario, ScenarioScript] = {
         otp_can_rescue=True,
     ),
 }
+# fmt: on
 
 
 def resolve_scenario(
@@ -165,9 +167,10 @@ def resolve_scenario(
         for scenario in Scenario:
             if scenario.value == needle:
                 return scenario, "claimed_user_id exact"
-        for scenario in Scenario:
-            if scenario.value in needle:
-                return scenario, "claimed_user_id substring"
+        # Substring matching used to live here. It meant a genuine vendor id
+        # that merely contained "replay" or "ai_agent" was scored as that
+        # attack, so a real vendor could be denied over their name. Exact
+        # match only.
 
     return Scenario.REAL_CFO, "default"
 

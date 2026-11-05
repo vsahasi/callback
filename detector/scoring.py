@@ -36,7 +36,11 @@ def blend_risk(factors: list[Factor]) -> float:
     scored = [f for f in factors if f.verdict is not FactorVerdict.NOT_RUN]
     total_weight = sum(f.weight for f in scored)
     if total_weight <= 0.0:
-        return 0.0
+        # Nothing could be scored. This used to return 0.0, which decide()
+        # reads as ALLOW, so a total inference failure authenticated the
+        # caller. "No evidence" and "perfect evidence" must never be the same
+        # number in a verification service: fail closed at maximum risk.
+        return 1.0
     weighted = sum(f.weight * (1.0 - f.score) for f in scored)
     return _clamp(weighted / total_weight)
 

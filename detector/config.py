@@ -7,6 +7,7 @@ small and the mock container boots fast.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 
 
@@ -34,17 +35,29 @@ class Settings:
     mock_jitter_min_ms: int
     mock_jitter_max_ms: int
     speech_segments_before_decision: int
+    # True when no CALLBACK_API_TOKEN was supplied and a random one was
+    # generated. The service then refuses every caller, which is the safe
+    # direction: a misnamed or empty secret must not leave the detector open.
+    api_token_generated: bool = False
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         jitter_min = _env_int("CALLBACK_MOCK_JITTER_MIN_MS", 150)
         jitter_max = _env_int("CALLBACK_MOCK_JITTER_MAX_MS", 400)
         if jitter_max < jitter_min:
             raise ValueError(
                 "CALLBACK_MOCK_JITTER_MAX_MS must be >= CALLBACK_MOCK_JITTER_MIN_MS"
             )
+        # A missing or empty token used to fall back to the literal
+        # "dev-token", which is committed in this repo, so a misnamed Modal
+        # secret would have left the service wide open. An empty token was
+        # worse: compare_digest("", "") is True, so a bare "Bearer "
+        # authenticated. Generate an unguessable token instead and fail closed.
+        supplied = os.environ.get("CALLBACK_API_TOKEN", "").strip()
+        generated = not supplied
         return cls(
-            api_token=os.environ.get("CALLBACK_API_TOKEN", "dev-token"),
+            api_token=supplied or secrets.token_urlsafe(32),
+            api_token_generated=generated,
             mock_mode=_env_bool("CALLBACK_MOCK_MODE", True),
             session_ttl_seconds=_env_int("CALLBACK_SESSION_TTL_SECONDS", 300),
             otp_max_attempts=_env_int("CALLBACK_OTP_MAX_ATTEMPTS", 3),

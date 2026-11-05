@@ -50,9 +50,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "Mock mode runs five scripted scenarios through the real state "
             "machine."
         ),
+        # The interactive docs and the OpenAPI document are unauthenticated by
+        # default, which publishes the whole contract to anyone who can reach
+        # the service. It is shared deliberately via docs/CONTRACT.md and
+        # schemas/contract.schema.json instead.
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
     app.state.settings = resolved
     app.state.engine = engine
+
+    if resolved.api_token_generated:
+        # Loud on purpose: the service is up but can authenticate nobody.
+        print(
+            "WARNING: CALLBACK_API_TOKEN was not set, so a random token was "
+            "generated and every request will be rejected with 401. Set the "
+            "token (Modal secret callback-detector) and restart.",
+            flush=True,
+        )
 
     def require_token(
         authorization: Annotated[str | None, Header()] = None,
@@ -61,7 +77,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not authorization or not authorization.lower().startswith("bearer "):
             raise Unauthorized("missing bearer token")
         presented = authorization.split(" ", 1)[1].strip()
-        if not secrets.compare_digest(presented, expected):
+        # Compare bytes, not str: secrets.compare_digest raises TypeError on
+        # non-ASCII str, and Starlette decodes headers as latin-1, so one
+        # non-ASCII byte in the header turned a 401 into an unhandled 500.
+        if not secrets.compare_digest(
+            presented.encode("utf-8"), expected.encode("utf-8")
+        ):
             raise Unauthorized("invalid bearer token")
 
     # ------------------------------------------------------------- handlers
