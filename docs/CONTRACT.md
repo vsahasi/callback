@@ -18,6 +18,28 @@ Tell me what differs and I will reconcile and bump the version. A schema
 snapshot test makes any change show up as an explicit diff, so this will not
 drift silently.
 
+Two specific things need your answer, both found by reading the project README
+after this service was written.
+
+**1. Decision vocabulary.** The project README describes outcomes as *verified*,
+*mismatch* and *needs review*. This service returns `allow`, `deny` and
+`challenge`, which is what the build brief said. The likely mapping is `allow`
+to verified, `deny` to mismatch on the voice dimension, and `challenge` to
+needs review pending the code. That is a guess. It matters because you have to
+combine this voice verdict with the separate bank-details check before reaching
+a final verdict, so tell me which vocabulary should cross the wire.
+
+**2. Who owns the texted code.** This service models an OTP step-up, and the
+project README says Callback texts a code to the same line. If you own Twilio
+and the code, then `otp_submit` here is you reporting an outcome rather than me
+adjudicating it, and the OTP factor should carry less weight in the blend.
+Confirm the division and I will adjust.
+
+Also note the scenario names (`real_cfo` and friends) came from the build brief
+and read as impersonating a company officer. In this product the impersonated
+party is the vendor, so `real_cfo` means the genuine expected caller. Worth
+renaming once the rest is settled.
+
 The machine-readable version of everything below is
 [`schemas/contract.schema.json`](../schemas/contract.schema.json).
 
