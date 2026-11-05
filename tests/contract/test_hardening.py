@@ -479,3 +479,83 @@ async def test_explicit_scenario_header_still_wins() -> None:
         )
     assert response.status_code == 200, response.text
     assert response.json()["scenario"] == Scenario.AI_AGENT.value
+
+
+# ------------------------------- the 422 body does not echo the input
+
+
+SENSITIVE = "40239871556"
+
+
+async def test_validation_errors_do_not_echo_the_rejected_value() -> None:
+    """The 422 body must not hand the caller back what they sent.
+
+    Pydantic attaches the rejected input to every entry of
+    RequestValidationError.errors(), so rendering that list verbatim returned
+    the offending value to the sender and wrote it into any proxy log on the
+    way out. otp_code has a max length, so an over-long one is rejected by
+    validation and used here as a stand-in for any sensitive field.
+    """
+
+    async with client_for(settings_with()) as c:
+        response = await c.post(
+            "/events",
+            json={
+                "session_id": "hardening-422-echo-1",
+                "event": "otp_submit",
+                "sequence": 1,
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "otp_code": SENSITIVE,
+                "metadata": {},
+            },
+            headers={SCENARIO_HEADER: Scenario.REAL_CFO.value},
+        )
+
+    assert response.status_code == 422, response.text
+    assert SENSITIVE not in response.text, response.text
+    body = response.json()
+    assert body["error"]["code"] == "validation_error"
+    # It still has to say what was wrong.
+    assert "otp_code" in (body["error"]["detail"] or "")
+
+
+async def test_validation_errors_do_not_echo_nested_values() -> None:
+    """A sensitive value nested in metadata must not come back either."""
+
+    async with client_for(settings_with()) as c:
+        response = await c.post(
+            "/events",
+            json={
+                "session_id": "hardening-422-nested-1",
+                "event": "session_start",
+                "sequence": -1,  # rejected: ge=0
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "metadata": {"account": SENSITIVE},
+            },
+            headers={SCENARIO_HEADER: Scenario.REAL_CFO.value},
+        )
+
+    assert response.status_code == 422, response.text
+    assert SENSITIVE not in response.text, response.text
+
+
+async def test_validation_detail_still_identifies_the_field() -> None:
+    """Dropping the input must not make the error useless."""
+
+    async with client_for(settings_with()) as c:
+        response = await c.post(
+            "/events",
+            json={
+                "session_id": "short",
+                "event": "session_start",
+                "sequence": 1,
+                "occurred_at": datetime.now(UTC).isoformat(),
+                "metadata": {},
+            },
+            headers={SCENARIO_HEADER: Scenario.REAL_CFO.value},
+        )
+
+    assert response.status_code == 422, response.text
+    detail = response.json()["error"]["detail"] or ""
+    assert "session_id" in detail, detail
+    assert "short" not in detail, detail

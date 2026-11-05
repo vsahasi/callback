@@ -24,6 +24,7 @@ from detector import mock
 from detector.config import Settings
 from detector.errors import DetectorError, Unauthorized
 from detector.state import DetectorEngine
+from detector.verification import build_verification_router
 from shared.contract import (
     CONTRACT_VERSION,
     ErrorBody,
@@ -60,6 +61,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved
     app.state.engine = engine
+
+    # Bank-detail verification. Mounted after app.state.engine is set, because
+    # a request that omits voice_decision has the detector read its own verdict
+    # off the session.
+    app.include_router(build_verification_router(resolved))
 
     if resolved.api_token_generated:
         # Loud on purpose: the service is up but can authenticate nobody.
@@ -100,11 +106,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _validation_error(
         _: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # Never echo the rejected input. Pydantic attaches it to every error
+        # entry, so rendering errors() verbatim hands the caller back whatever
+        # they sent and writes it into any proxy log on the way out. A rejected
+        # otp_code, or a spoken account number on the verification endpoint,
+        # must not make that round trip. loc and msg say what is wrong without
+        # repeating the value, and ctx is dropped too because it can carry
+        # context values rather than just the constraint.
+        def _detail_line(error: dict[str, object]) -> str:
+            location = ".".join(str(part) for part in error.get("loc", ())) or "body"
+            message = error.get("msg", "invalid")
+            return f"{location}: {message}"
+
+        detail = "; ".join(_detail_line(error) for error in exc.errors()[:3])
         body = ErrorResponse(
             error=ErrorBody(
                 code=ErrorCode.VALIDATION_ERROR,
                 message="request body failed contract validation",
-                detail=str(exc.errors()[:3]),
+                detail=detail or None,
             )
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
