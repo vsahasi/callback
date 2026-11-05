@@ -124,7 +124,7 @@ class Ledger:
     entries: dict[str, dict[str, object]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, data_dir: Path) -> "Ledger":
+    def load(cls, data_dir: Path) -> Ledger:
         path = data_dir / "checksums.json"
         if path.exists():
             return cls(path=path, entries=json.loads(path.read_text("utf-8")))
@@ -351,9 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     data_dir = args.data_dir.expanduser().resolve()
-    datasets = (
-        tuple(REGISTRY_BY_KEY[k] for k in args.only) if args.only else REGISTRY
-    )
+    datasets = tuple(REGISTRY_BY_KEY[k] for k in args.only) if args.only else REGISTRY
 
     print(f"data dir: {data_dir}")
     ok, message = check_space(data_dir, datasets)
@@ -372,9 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"datasets: {len(datasets)}")
     for dataset in datasets:
         marker = "official digest" if dataset.sha256 else "trust-on-first-use"
-        print(
-            f"  - {dataset.key:24s} {human(dataset.approx_gib):>10s}  [{marker}]"
-        )
+        print(f"  - {dataset.key:24s} {human(dataset.approx_gib):>10s}  [{marker}]")
 
     if args.dry_run:
         print("\ndry run, nothing downloaded.")
