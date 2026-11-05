@@ -1,0 +1,136 @@
+name: CI
+
+# Every push and every pull request. Three jobs run in parallel so the
+# slowest one sets the wall clock: tests, lint, and a Modal deploy preflight
+# that needs no credentials.
+#
+# A branch that has an open pull request gets two runs per push, one per
+# event. If that ever costs real minutes, narrow this to
+# `push: {branches: [main]}` and let pull_request cover the rest.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never let CI "fix" the frozen contract by rewriting the snapshot.
+  # tests/contract/test_schema_snapshot.py only rewrites when this is "1".
+  CALLBACK_UPDATE_SNAPSHOT: ""
+
+jobs:
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.11
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --locked fails if pyproject.toml and uv.lock disagree, so a
+      # dependency added without re-running `uv lock` is caught here.
+      - name: Install dev dependencies
+        run: uv sync --extra dev --locked
+
+      # Run the frozen-contract check first and on its own. It is the one
+      # failure that means "the API shape changed", so it should be the
+      # first red step rather than three lines inside a 57-test summary.
+      - name: Contract schema snapshot is current
+        id: snapshot
+        run: uv run pytest tests/contract/test_schema_snapshot.py -v
+
+      - name: Explain contract drift
+        if: failure() && steps.snapshot.outcome == 'failure'
+        run: |
+          {
+            echo "## Contract schema drift"
+            echo
+            echo 'The JSON-schema bundle built by `shared/contract.py` no longer'
+            echo 'matches the committed snapshot at `schemas/contract.schema.json`.'
+            echo
+            echo 'If the change was intended:'
+            echo
+            echo '```'
+            echo 'make snapshot          # rewrites the snapshot'
+            echo '# then bump CONTRACT_VERSION in shared/contract.py'
+            echo '```'
+            echo
+            echo 'Commit the snapshot and the version bump together, and tell'
+            echo 'whoever owns the agent side of the contract.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Belt and braces: the snapshot test rewrites the committed file when
+      # CALLBACK_UPDATE_SNAPSHOT=1. If that ever leaks into CI the test above
+      # would skip and pass, so assert the file on disk is untouched.
+      - name: Snapshot file was not rewritten by the test run
+        run: |
+          if ! git diff --quiet -- schemas/; then
+            echo "::error file=schemas/contract.schema.json::The test run rewrote the committed snapshot. CALLBACK_UPDATE_SNAPSHOT must not be set in CI."
+            git --no-pager diff -- schemas/
+            exit 1
+          fi
+
+      - name: Full test suite
+        run: uv run pytest
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.11
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dev dependencies
+        run: uv sync --extra dev --locked
+
+      # --output-format=github turns each violation into an inline annotation
+      # on the diff instead of a wall of text in the log.
+      - name: ruff check
+        run: uv run ruff check . --output-format=github
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+  modal-preflight:
+    name: modal deploy preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv and Python 3.11
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install deploy dependencies
+        run: uv sync --extra deploy --locked
+
+      # No Modal token and none needed. This still catches the failures that
+      # would otherwise surface halfway through a deploy: a Modal upgrade
+      # that renamed an API, a modal_app.py that no longer imports, or the
+      # single-container pin being lifted while session state is in memory.
+      - name: Validate the Modal deployment without deploying
+        run: uv run python scripts/modal_preflight.py --allow-unauthenticated

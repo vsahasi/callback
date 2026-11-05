@@ -1,0 +1,93 @@
+# Ruff configuration for Callback.
+#
+# Lives here, not in pyproject.toml, so lint policy can change without
+# touching the dependency manifest.
+#
+#   uv run ruff check .          lint
+#   uv run ruff check . --fix    lint and autofix
+#   uv run ruff format .         format
+#
+# Philosophy: catch real bugs and keep imports tidy. Do not litigate style
+# the formatter already owns, and do not demand docstrings on every symbol.
+
+target-version = "py311"
+line-length = 88
+
+# Keep the walker out of generated and vendored trees. Most of these are
+# already gitignored; listing them makes a local `ruff check .` fast.
+extend-exclude = [
+    ".venv",
+    "checkpoints",
+    "data",
+    "datasets",
+    "recordings",
+    "runs",
+    "wandb",
+]
+
+[lint]
+select = [
+    "A",     # flake8-builtins: do not shadow builtins
+    "ASYNC", # flake8-async: blocking calls in async defs
+    "B",     # flake8-bugbear: likely bugs (mutable defaults, loop closures)
+    "BLE",   # flake8-blind-except: bare `except Exception`
+    "C4",    # flake8-comprehensions
+    "DTZ",   # flake8-datetimez: naive datetimes (this service stamps events)
+    "E",     # pycodestyle errors
+    "F",     # pyflakes: undefined names, unused imports
+    "G",     # flake8-logging-format
+    "I",     # isort: import order
+    "ISC",   # implicit string concatenation
+    "LOG",   # flake8-logging
+    "N",     # pep8-naming
+    "PIE",   # flake8-pie: misc dead code
+    "PLE",   # pylint errors (never style)
+    "PLW",   # pylint warnings
+    "PT",    # flake8-pytest-style
+    "RET",   # flake8-return
+    "RUF",   # ruff-specific rules
+    "SIM",   # flake8-simplify
+    "TID",   # flake8-tidy-imports: no relative-parent imports
+    "UP",    # pyupgrade: modern syntax for py311
+    "W",     # pycodestyle warnings
+]
+
+ignore = [
+    # The formatter owns line width. Keeping E501 on top of it just flags
+    # long string literals and URLs that cannot be wrapped.
+    "E501",
+    # Conflicts with the formatter (ruff format may produce ISC001).
+    "ISC001",
+    # This codebase names exceptions after the HTTP condition they represent
+    # (Unauthorized, SessionNotFound). That reads better at the raise site
+    # than UnauthorizedError.
+    "N818",
+]
+
+[lint.per-file-ignores]
+# Diagnostic tooling reports failures instead of raising them. A preflight
+# check that ends in a traceback is a broken preflight check, so the broad
+# `except Exception` handlers in scripts/ are the design, not an oversight.
+"scripts/**" = ["BLE001"]
+
+# A test often asserts one coherent fact that needs two clauses, and
+# splitting it makes the failure output worse, not better. Likewise a
+# pytest.raises block sometimes has to set up the condition it proves.
+# These are test-ergonomics rules, not correctness rules.
+"tests/**" = ["PT012", "PT018"]
+
+[lint.isort]
+known-first-party = ["detector", "shared", "training"]
+# Keep `from __future__ import annotations` pinned at the top of every module.
+required-imports = ["from __future__ import annotations"]
+
+[lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[format]
+# Defaults, stated so a future reader knows they were chosen, not inherited:
+# double quotes, spaces, magic trailing comma respected.
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+docstring-code-format = true
