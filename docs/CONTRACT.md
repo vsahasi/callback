@@ -214,6 +214,26 @@ Three attempts, 120 second expiry, six digits. In mock mode the code is
 A wrong code with attempts left keeps `decision: "challenge"` and decrements
 `otp.attempts_remaining`. The third wrong code is terminal `deny`.
 
+**A correct code is not a guaranteed `allow`.** It moves the risk score; it
+does not override policy. A correct code returns `deny` when any of these
+holds, so do not treat `otp_submit` as an approval step:
+
+- a fatal factor has tripped (a detected replay, an automated caller)
+- the scenario is one that cannot be rescued by step-up
+- no voice analysis has happened yet, so there is nothing for the code to
+  corroborate
+- the blended risk is still above the allow threshold after the code is
+  credited
+
+That last case is the normal one to design for: the code is one factor among
+several, weighted at 0.40, not a master key. Always act on `next_action` and
+`decision`, never on the fact that a code was accepted.
+
+Relatedly, sending `otp_request` before any speech no longer manufactures a
+usable gate. Voice analysis continues while a challenge is open, so a fatal
+signal arriving then ends the session, and the next event gets `409`
+`session_terminal`.
+
 Two scenarios cannot be rescued by OTP at all: `replay` and `ai_agent` are
 denied outright and no challenge is issued. Check `otp` for `null` rather than
 assuming a challenge is always available.
