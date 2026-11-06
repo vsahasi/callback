@@ -201,6 +201,10 @@ class Session:
     claimed_user_id: str | None = None
     events_seen: int = 0
     speech_segments: int = 0
+    #: How many audio spans the analysis engine actually scored. Lower than
+    #: speech_segments whenever a span had no uri, failed to fetch or failed
+    #: to decode, which is exactly the gap a reviewer needs to see.
+    spans_analysed: int = 0
     max_sequence: int = -1
     factors: list[Factor] = field(default_factory=list)
     risk_score: float = 0.0
@@ -266,6 +270,7 @@ def session_to_json(session: Session) -> dict[str, Any]:
         "claimed_user_id": session.claimed_user_id,
         "events_seen": session.events_seen,
         "speech_segments": session.speech_segments,
+        "spans_analysed": session.spans_analysed,
         "max_sequence": session.max_sequence,
         "factors": [f.model_dump(mode="json") for f in session.factors],
         "risk_score": session.risk_score,
@@ -311,6 +316,9 @@ def session_from_json(doc: dict[str, Any]) -> Session:
             claimed_user_id=doc["claimed_user_id"],
             events_seen=doc["events_seen"],
             speech_segments=doc["speech_segments"],
+            # Tolerated as absent: a session written by an older replica
+            # during a rolling deploy has no such key.
+            spans_analysed=doc.get("spans_analysed", 0),
             max_sequence=doc["max_sequence"],
             factors=[Factor.model_validate(f) for f in doc["factors"]],
             risk_score=doc["risk_score"],

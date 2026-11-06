@@ -623,10 +623,13 @@ def test_the_blend_alone_would_have_allowed_it() -> None:
 async def test_a_diluted_failing_factor_is_not_allowed(monkeypatch) -> None:
     """End to end: a FAIL never becomes an allow, however good the average."""
 
-    from detector import state as state_module
+    # SCRIPTS lives in detector.mock. detector.state used to import it
+    # directly; it now goes through detector.evidence, so this patches
+    # the one dict both of them share rather than a re-export.
+    from detector import mock as mock_module
 
     script = _diluted_fail_script()
-    monkeypatch.setitem(state_module.SCRIPTS, Scenario.REAL_CFO, script)
+    monkeypatch.setitem(mock_module.SCRIPTS, Scenario.REAL_CFO, script)
 
     async with client_for(settings_with()) as c:
         response = await _drive(
@@ -654,10 +657,13 @@ async def test_a_diluted_fail_denies_when_step_up_is_unavailable(
 
     from dataclasses import replace
 
-    from detector import state as state_module
+    # SCRIPTS lives in detector.mock. detector.state used to import it
+    # directly; it now goes through detector.evidence, so this patches
+    # the one dict both of them share rather than a re-export.
+    from detector import mock as mock_module
 
     script = replace(_diluted_fail_script(), otp_can_rescue=False)
-    monkeypatch.setitem(state_module.SCRIPTS, Scenario.REAL_CFO, script)
+    monkeypatch.setitem(mock_module.SCRIPTS, Scenario.REAL_CFO, script)
 
     async with client_for(settings_with()) as c:
         response = await _drive(
