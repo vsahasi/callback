@@ -15,7 +15,19 @@ attacker's script. For that case the measurements below are genuinely
 informative. For a close match they are not, and the `detail` string says so
 rather than implying a positive identification.
 
-With no reference recording the factor is `not_run`.
+With no reference the factor is `not_run`.
+
+The reference side is a `VoicePrint`, not a recording
+----------------------------------------------------
+The comparison reads exactly five things from the reference: whether the
+audio was usable, its conditioning notes, its median pitch, how much voiced
+speech it held, and its long-term average spectrum. `VoicePrint` is those
+five things and nothing else, which is why the service can hold a reference
+without holding a vendor's voice. See `detector.analysis.voiceprint`.
+
+One consequence worth stating: the probe is reduced to a print too, so the
+comparison is symmetric by construction rather than by care, and a change to
+how either side is measured cannot apply to only one of them.
 """
 
 from __future__ import annotations
@@ -33,7 +45,8 @@ from detector.analysis.cues import (
     temper,
     verdict_for,
 )
-from detector.analysis.dsp import EPS, AudioContext, pearson
+from detector.analysis.dsp import AudioContext, pearson
+from detector.analysis.voiceprint import VoicePrint, voiceprint_from
 
 __all__ = ["analyse_voice_match"]
 
@@ -48,36 +61,40 @@ WEIGHT_SHAPE = 0.3
 # Independent cues compound; see cues.blend.
 SHARPNESS = 2.6
 
+NO_REFERENCE = (
+    "No enrolled reference recording for the claimed identity, so no voice "
+    "comparison was made. This factor carries no weight in the decision."
+)
+
 
 def analyse_voice_match(
-    probe: AudioContext, reference: AudioContext | None
+    probe: AudioContext, reference: VoicePrint | None
 ) -> DetectorResult:
-    """Compare the caller against an enrolled reference.
+    """Compare the caller against an enrolled reference print.
 
     Returns `not_run` when there is no reference, which is the normal state
-    of this service until an enrolment recording exists for the vendor.
+    of this service for any identity that has not been enrolled.
     """
 
     if reference is None:
-        return not_run(
-            "No enrolled reference recording for the claimed identity, so no voice "
-            "comparison was made. This factor carries no weight in the decision."
-        )
-    if not probe.block.usable or not reference.block.usable:
+        return not_run(NO_REFERENCE)
+
+    caller = voiceprint_from(probe)
+    if not caller.usable or not reference.usable:
         return inconclusive(
             "Voice comparison not possible: "
-            + ("; ".join(probe.notes + reference.notes) or "unusable audio")
+            + ("; ".join(caller.notes + reference.notes) or "unusable audio")
             + "."
         )
 
     cues: list[Cue] = []
     measurements: dict[str, float] = {}
 
-    pitch_cue, pitch_measures = _pitch_cue(probe, reference)
+    pitch_cue, pitch_measures = _pitch_cue(caller, reference)
     cues.append(pitch_cue)
     measurements.update(pitch_measures)
 
-    spectrum_cue, spectrum_measures = _spectrum_cue(probe, reference)
+    spectrum_cue, spectrum_measures = _spectrum_cue(caller, reference)
     cues.append(spectrum_cue)
     measurements.update(spectrum_measures)
 
@@ -85,8 +102,8 @@ def analyse_voice_match(
     measurable = sum(1 for cue in cues if cue.measurable)
     confident = (
         measurable == 2
-        and probe.pitch.voiced_seconds >= MIN_VOICED_SECONDS
-        and reference.pitch.voiced_seconds >= MIN_VOICED_SECONDS
+        and caller.voiced_seconds >= MIN_VOICED_SECONDS
+        and reference.voiced_seconds >= MIN_VOICED_SECONDS
     )
     score = temper(raw_score, confident=confident)
     measurements["cues_measurable"] = float(measurable)
@@ -95,8 +112,8 @@ def analyse_voice_match(
     detail = summarise("Voice comparison:", cues)
     if not confident:
         detail = (
-            f"{detail} Low confidence: {probe.pitch.voiced_seconds:.1f}s voiced in the "
-            f"call and {reference.pitch.voiced_seconds:.1f}s in the reference."
+            f"{detail} Low confidence: {caller.voiced_seconds:.1f}s voiced in the "
+            f"call and {reference.voiced_seconds:.1f}s in the reference."
         )
     elif score >= 0.62:
         detail = (
@@ -114,7 +131,7 @@ def analyse_voice_match(
 
 
 def _pitch_cue(
-    probe: AudioContext, reference: AudioContext
+    caller: VoicePrint, reference: VoicePrint
 ) -> tuple[Cue, dict[str, float]]:
     """Median F0 distance in semitones.
 
@@ -122,12 +139,12 @@ def _pitch_cue(
     at 100 Hz than at 220 Hz.
     """
 
-    probe_f0 = probe.pitch.median_f0
-    reference_f0 = reference.pitch.median_f0
-    if probe_f0 <= 0.0 or reference_f0 <= 0.0:
+    if not caller.has_pitch or not reference.has_pitch:
         note = "no voiced speech on one side, so pitch register could not be compared"
         return _unmeasurable("pitch_register", WEIGHT_PITCH, note), {}
 
+    probe_f0 = caller.median_f0_hz
+    reference_f0 = reference.median_f0_hz
     distance = float(abs(12.0 * np.log2(probe_f0 / reference_f0)))
     measures = {
         "probe_f0_hz": probe_f0,
@@ -160,7 +177,7 @@ def _pitch_cue(
 
 
 def _spectrum_cue(
-    probe: AudioContext, reference: AudioContext
+    caller: VoicePrint, reference: VoicePrint
 ) -> tuple[Cue, dict[str, float]]:
     """Correlation of the two long-term average log spectra.
 
@@ -169,17 +186,25 @@ def _spectrum_cue(
     that reason.
     """
 
-    probe_spectrum = _ltas(probe)
-    reference_spectrum = _ltas(reference)
-    if probe_spectrum is None or reference_spectrum is None:
+    if not caller.has_spectrum or not reference.has_spectrum:
         note = "bandwidth too narrow to compare spectral shape"
         return _unmeasurable("spectral_shape", WEIGHT_SHAPE, note), {}
 
-    size = min(probe_spectrum.size, reference_spectrum.size)
-    if size < 16:
-        note = "too few shared frequency bins to compare spectral shape"
+    if not caller.shares_grid_with(reference):
+        # Correlating these would line up bin 40 of one spectrum against a
+        # different frequency in the other and report the result as a
+        # similarity. Refusing is the only honest option; the pitch cue is
+        # unaffected and still carries 0.7.
+        note = (
+            f"reference was analysed on a {reference.bin_hz:.1f} Hz frequency grid and "
+            f"this call on a {caller.bin_hz:.1f} Hz one, so spectral shape is not "
+            "comparable"
+        )
         return _unmeasurable("spectral_shape", WEIGHT_SHAPE, note), {}
 
+    probe_spectrum = caller.spectrum()
+    reference_spectrum = reference.spectrum()
+    size = min(probe_spectrum.size, reference_spectrum.size)
     correlation = pearson(probe_spectrum[:size], reference_spectrum[:size])
     measures = {"ltas_correlation": correlation}
 
@@ -202,24 +227,6 @@ def _spectrum_cue(
         ),
         measures,
     )
-
-
-def _ltas(ctx: AudioContext) -> np.ndarray | None:
-    """Mean log power spectrum over speech frames, 300 Hz to 3.4 kHz, in dB.
-
-    Normalised to zero mean so overall level drops out; what remains is
-    shape.
-    """
-
-    freqs = ctx.spec.freqs
-    band = (freqs >= 300.0) & (freqs <= min(3400.0, ctx.nyquist))
-    if int(np.count_nonzero(band)) < 16:
-        return None
-    spectrum = ctx.mean_log_spectrum(ctx.activity.speech)[band] * 10.0
-    spread = float(np.std(spectrum))
-    if spread <= EPS:
-        return None
-    return spectrum - float(np.mean(spectrum))
 
 
 def _unmeasurable(name: str, weight: float, note: str) -> Cue:
