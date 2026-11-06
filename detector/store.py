@@ -977,7 +977,7 @@ class ModalDictSessionStore(SessionStore):
         """
 
         if self._backing is None:
-            self._backing = _open_modal_dict(
+            self._backing = open_modal_dict(
                 self.name,
                 create_if_missing=self._create_if_missing,
                 environment_name=self._environment_name,
@@ -1371,10 +1371,13 @@ def _lease_expired(record: Any) -> bool:
         return True
 
 
-def _open_modal_dict(
+def open_modal_dict(
     name: str, *, create_if_missing: bool, environment_name: str | None
 ) -> DictBacking:
     """Open a named `modal.Dict`, importing `modal` lazily.
+
+    Public because `detector.enrolment` needs the same optional-dependency
+    dance for the dict that holds voice prints.
 
     `modal` is an optional dependency (the `deploy` extra). This module imports
     and loads with it absent; only reaching for the distributed backend needs
@@ -1385,9 +1388,9 @@ def _open_modal_dict(
         import modal
     except ImportError as exc:
         raise StoreUnavailable(
-            "ModalDictSessionStore needs the optional 'modal' dependency. "
+            "The distributed stores need the optional 'modal' dependency. "
             "Install the deploy extra (uv sync --extra deploy), or keep the "
-            "default InMemorySessionStore."
+            "default in-process stores."
         ) from exc
 
     try:
@@ -1417,6 +1420,7 @@ __all__ = [
     "StoreUnavailable",
     "SweepReport",
     "guard_monotonic",
+    "open_modal_dict",
     "otp_from_json",
     "otp_to_json",
     "session_from_json",
