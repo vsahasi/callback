@@ -25,6 +25,20 @@ def _env_int(name: str, default: int) -> int:
     return int(raw)
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return float(raw)
+
+
+def _env_hosts(name: str) -> tuple[str, ...]:
+    """A comma-separated host allowlist, lowercased, blanks dropped."""
+
+    raw = os.environ.get(name, "")
+    return tuple(host.strip().lower() for host in raw.split(",") if host.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     api_token: str
@@ -47,6 +61,30 @@ class Settings:
     # Ceiling on a session idempotency cache. 0 means use the
     # store default.
     max_cached_responses: int = 0
+
+    # ------------------------------------------------------- audio transport
+    #
+    # Every one of these defaults to the closed position. `uri` arrives in a
+    # request body, so switching fetching on without naming hosts would turn
+    # POST /events into a server-side request forgery primitive. See the
+    # module docstring of detector/audio.py for the full threat model.
+    audio_enabled: bool = False
+    #: Hosts this service will fetch audio from. Empty means none, and an
+    #: empty allowlist with audio_enabled on still fetches nothing over the
+    #: network.
+    audio_allowed_hosts: tuple[str, ...] = ()
+    #: file: uris, for local development and for the demo harness. Needs
+    #: audio_file_root as well: without a root, a file: uri reads anything the
+    #: process can read.
+    audio_allow_file_uris: bool = False
+    audio_file_root: str | None = None
+    #: data: uris carry the span inline. No network, so no SSRF, which is why
+    #: this one is the exception that defaults on.
+    audio_allow_data_uris: bool = True
+    audio_max_bytes: int = 8 * 1024 * 1024
+    #: Well inside the 800 ms budget shared.client gives the whole call.
+    audio_fetch_timeout_ms: int = 400
+    audio_max_seconds: float = 30.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -79,4 +117,14 @@ class Settings:
                 "CALLBACK_SESSION_EVICTION_GRACE_SECONDS", 0
             ),
             max_cached_responses=_env_int("CALLBACK_MAX_CACHED_RESPONSES", 0),
+            audio_enabled=_env_bool("CALLBACK_AUDIO_ENABLED", False),
+            audio_allowed_hosts=_env_hosts("CALLBACK_AUDIO_ALLOWED_HOSTS"),
+            audio_allow_file_uris=_env_bool("CALLBACK_AUDIO_ALLOW_FILE_URIS", False),
+            audio_file_root=(
+                os.environ.get("CALLBACK_AUDIO_FILE_ROOT", "").strip() or None
+            ),
+            audio_allow_data_uris=_env_bool("CALLBACK_AUDIO_ALLOW_DATA_URIS", True),
+            audio_max_bytes=_env_int("CALLBACK_AUDIO_MAX_BYTES", 8 * 1024 * 1024),
+            audio_fetch_timeout_ms=_env_int("CALLBACK_AUDIO_FETCH_TIMEOUT_MS", 400),
+            audio_max_seconds=_env_float("CALLBACK_AUDIO_MAX_SECONDS", 30.0),
         )

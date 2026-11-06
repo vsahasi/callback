@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, TextIO
 
 from fastapi import Depends, FastAPI, Header, Request, Response
@@ -29,6 +31,7 @@ from detector import mock
 from detector.config import Settings
 from detector.errors import DetectorError, Unauthorized
 from detector.observability import ObservabilityConfig
+from detector.pipeline import AudioPipeline
 from detector.review import mount as mount_review
 from detector.state import DetectorEngine
 from detector.verification import build_verification_router
@@ -62,7 +65,22 @@ def create_app(
     resolved = settings or Settings.from_env()
     engine = DetectorEngine(resolved)
 
+    # Fetch, decode and analyse real call audio. Inert in mock mode and inert
+    # with CALLBACK_AUDIO_ENABLED unset, which is the default, so in both of
+    # those the route pays one boolean for it.
+    audio = AudioPipeline(resolved)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # The pipeline holds a keep-alive httpx client. Without this the
+        # connections leak on reload and every test that builds an app warns.
+        try:
+            yield
+        finally:
+            await audio.aclose()
+
     app = FastAPI(
+        lifespan=lifespan,
         title="Callback detector",
         version=CONTRACT_VERSION,
         description=(
@@ -80,6 +98,7 @@ def create_app(
     )
     app.state.settings = resolved
     app.state.engine = engine
+    app.state.audio = audio
 
     # Bank-detail verification. Mounted after app.state.engine is set, because
     # a request that omits voice_decision has the detector read its own verdict
@@ -166,10 +185,18 @@ def create_app(
     ) -> EventResponse:
         started = time.perf_counter()
 
+        # Before the state machine, because this is the only layer that may
+        # block on I/O. A span that cannot be fetched or decoded is not an
+        # error: it yields no factors and a note saying why, and the scoring
+        # layer refuses to call an unscored caller safe.
+        span = await audio.for_event(payload)
+
         result = engine.handle_event(
             payload,
             scenario_header=x_callback_scenario,
             idempotency_key=idempotency_key,
+            observed_factors=span.factors,
+            audio_note=span.note,
         )
 
         if resolved.mock_mode and not result.idempotent_replay:

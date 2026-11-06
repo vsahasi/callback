@@ -55,10 +55,33 @@ The five are `real_cfo`, `cloned_voice`, `replay`, `ai_agent` and
 run through the real state machine, so the decisions, the step-ups and the
 timings are the ones the agent will see.
 
+### Real mode
+
+The same endpoints, with the audio actually measured instead of scripted.
+Restart the detector with two more variables and drive it with waveforms:
+
+```bash
+CALLBACK_API_TOKEN=kit-test CALLBACK_MOCK_MODE=0 CALLBACK_AUDIO_ENABLED=1 uv run uvicorn detector.app:app --port 8021
+```
+
+```bash
+uv run python examples/drive_real.py --base-url http://127.0.0.1:8021 --token kit-test
+```
+
+A live caller allows at risk 0.07. The same voice played back down the line
+denies on its room acoustics. A synthesiser reading the same script denies on
+the absence of micro-variation. A call with no readable audio denies too,
+because a caller nothing could be measured against is not a caller who passed.
+
+In production each span is an https url in your object store, and the bucket
+host has to be named in `CALLBACK_AUDIO_ALLOWED_HOSTS`. The uri comes from the
+request body, so an unrestricted fetcher would be a way into your network.
+`docs/DETECTOR.md` has the threat model and every limit.
+
 ```bash
 make test                                       # the suite
 make lint                                       # ruff check and a format check
-uv run python -m detector.analysis.calibration  # the real analysis, on synthetic audio
+uv run python -m detector.analysis.calibration  # the analysis, on synthetic audio
 ```
 
 - [`docs/DETECTOR.md`](docs/DETECTOR.md) to run the detector locally
