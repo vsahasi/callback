@@ -5,6 +5,11 @@ Endpoints:
     GET  /factors/{session_id}   current factor breakdown for a session
     GET  /healthz                liveness, contract version, mock flag
 
+Mounted here, defined elsewhere:
+    POST /verify/bank-details    detector.verification
+    GET  /metrics                detector.review
+    GET  /review, /review/api/*  detector.review
+
 Auth: a bearer token on every request except /healthz, compared in constant
 time against CALLBACK_API_TOKEN.
 """
@@ -14,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
-from typing import Annotated
+from typing import Annotated, TextIO
 
 from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -23,6 +28,8 @@ from fastapi.responses import JSONResponse
 from detector import mock
 from detector.config import Settings
 from detector.errors import DetectorError, Unauthorized
+from detector.observability import ObservabilityConfig
+from detector.review import mount as mount_review
 from detector.state import DetectorEngine
 from detector.verification import build_verification_router
 from shared.contract import (
@@ -37,8 +44,20 @@ from shared.contract import (
 )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    """Build the app. Tests call this directly with explicit settings."""
+def create_app(
+    settings: Settings | None = None,
+    *,
+    observability: ObservabilityConfig | None = None,
+    log_stream: TextIO | None = None,
+) -> FastAPI:
+    """Build the app. Tests call this directly with explicit settings.
+
+    `observability` and `log_stream` are the same kind of seam as `settings`:
+    the observability layer reads its switches from the environment by
+    default, and a test that asserts on log lines needs to hand it a stream
+    and a config it controls. Both default to the production behaviour, which
+    is `ObservabilityConfig.from_env()` writing JSON lines to stdout.
+    """
 
     resolved = settings or Settings.from_env()
     engine = DetectorEngine(resolved)
@@ -171,6 +190,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def get_factors(session_id: str) -> FactorsResponse:
         return engine.factors_for(session_id)
+
+    # ------------------------------------------------- observability + review
+    #
+    # Last, because it installs ASGI middleware that wraps every route above
+    # and it registers the 401 handler the review routes share with them.
+    # Returns the Observability instance: the journal a reviewer reads and the
+    # metric registry a scraper reads both hang off it.
+    app.state.observability = mount_review(
+        app,
+        engine=engine,
+        settings=resolved,
+        config=observability,
+        stream=log_stream,
+    )
 
     return app
 
