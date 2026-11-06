@@ -7,12 +7,20 @@
 recordings/
 *.wav
 *.mp3
+*.flac
+*.m4a
+*.ogg
 
 # Python
 __pycache__/
 *.pyc
+*.py[cod]
+*.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Node
 node_modules/
@@ -21,3 +29,18 @@ node_modules/
 .DS_Store
 .vscode/
 .idea/
+
+# Datasets and model artefacts: never committed, they live in ~/data/callback
+data/
+datasets/
+checkpoints/
+runs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# Local working notes
+PLAN.md

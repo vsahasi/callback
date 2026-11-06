@@ -1,0 +1,1068 @@
+{
+  "client_policy": {
+    "on_timeout": "deny",
+    "timeout_ms": 800
+  },
+  "contract_version": "0.1.0-provisional",
+  "enums": {
+    "AudioEncoding": [
+      "pcm_s16le",
+      "opus",
+      "flac"
+    ],
+    "Decision": [
+      "pending",
+      "challenge",
+      "allow",
+      "deny"
+    ],
+    "ErrorCode": [
+      "unauthorized",
+      "session_not_found",
+      "session_terminal",
+      "sequence_conflict",
+      "otp_exhausted",
+      "otp_expired",
+      "invalid_scenario",
+      "validation_error"
+    ],
+    "EventType": [
+      "session_start",
+      "caller_claim",
+      "speech_segment",
+      "otp_request",
+      "otp_submit",
+      "session_end"
+    ],
+    "FactorName": [
+      "voice_match",
+      "synthetic_speech",
+      "replay",
+      "agent_behaviour",
+      "liveness",
+      "otp"
+    ],
+    "FactorVerdict": [
+      "pass",
+      "fail",
+      "inconclusive",
+      "not_run"
+    ],
+    "NextAction": [
+      "continue_listening",
+      "request_otp",
+      "complete_allow",
+      "complete_deny"
+    ],
+    "Scenario": [
+      "real_cfo",
+      "cloned_voice",
+      "replay",
+      "ai_agent",
+      "human_impostor"
+    ],
+    "SessionState": [
+      "created",
+      "listening",
+      "challenging",
+      "allowed",
+      "denied",
+      "expired"
+    ]
+  },
+  "headers": {
+    "idempotency": "Idempotency-Key",
+    "scenario": "X-Callback-Scenario"
+  },
+  "models": {
+    "AudioRef": {
+      "$defs": {
+        "AudioEncoding": {
+          "enum": [
+            "pcm_s16le",
+            "opus",
+            "flac"
+          ],
+          "title": "AudioEncoding",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A span of call audio. Audio is referenced, never inlined in JSON.",
+      "properties": {
+        "encoding": {
+          "$ref": "#/$defs/AudioEncoding",
+          "default": "pcm_s16le"
+        },
+        "end_ms": {
+          "description": "Exclusive end offset from session start.",
+          "minimum": 0,
+          "title": "End Ms",
+          "type": "integer"
+        },
+        "sample_rate_hz": {
+          "default": 16000,
+          "maximum": 48000,
+          "minimum": 8000,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        },
+        "start_ms": {
+          "description": "Offset from session start.",
+          "minimum": 0,
+          "title": "Start Ms",
+          "type": "integer"
+        },
+        "track_id": {
+          "description": "LiveKit track identifier.",
+          "title": "Track Id",
+          "type": "string"
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional out-of-band location (object store) for the span.",
+          "title": "Uri"
+        }
+      },
+      "required": [
+        "track_id",
+        "start_ms",
+        "end_ms"
+      ],
+      "title": "AudioRef",
+      "type": "object"
+    },
+    "ErrorBody": {
+      "$defs": {
+        "ErrorCode": {
+          "enum": [
+            "unauthorized",
+            "session_not_found",
+            "session_terminal",
+            "sequence_conflict",
+            "otp_exhausted",
+            "otp_expired",
+            "invalid_scenario",
+            "validation_error"
+          ],
+          "title": "ErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorBody",
+      "type": "object"
+    },
+    "ErrorResponse": {
+      "$defs": {
+        "ErrorBody": {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/ErrorCode"
+            },
+            "detail": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Detail"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "ErrorBody",
+          "type": "object"
+        },
+        "ErrorCode": {
+          "enum": [
+            "unauthorized",
+            "session_not_found",
+            "session_terminal",
+            "sequence_conflict",
+            "otp_exhausted",
+            "otp_expired",
+            "invalid_scenario",
+            "validation_error"
+          ],
+          "title": "ErrorCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Every non-2xx response body.",
+      "properties": {
+        "contract_version": {
+          "default": "0.1.0-provisional",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "title": "ErrorResponse",
+      "type": "object"
+    },
+    "EventRequest": {
+      "$defs": {
+        "AudioEncoding": {
+          "enum": [
+            "pcm_s16le",
+            "opus",
+            "flac"
+          ],
+          "title": "AudioEncoding",
+          "type": "string"
+        },
+        "AudioRef": {
+          "additionalProperties": false,
+          "description": "A span of call audio. Audio is referenced, never inlined in JSON.",
+          "properties": {
+            "encoding": {
+              "$ref": "#/$defs/AudioEncoding",
+              "default": "pcm_s16le"
+            },
+            "end_ms": {
+              "description": "Exclusive end offset from session start.",
+              "minimum": 0,
+              "title": "End Ms",
+              "type": "integer"
+            },
+            "sample_rate_hz": {
+              "default": 16000,
+              "maximum": 48000,
+              "minimum": 8000,
+              "title": "Sample Rate Hz",
+              "type": "integer"
+            },
+            "start_ms": {
+              "description": "Offset from session start.",
+              "minimum": 0,
+              "title": "Start Ms",
+              "type": "integer"
+            },
+            "track_id": {
+              "description": "LiveKit track identifier.",
+              "title": "Track Id",
+              "type": "string"
+            },
+            "uri": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Optional out-of-band location (object store) for the span.",
+              "title": "Uri"
+            }
+          },
+          "required": [
+            "track_id",
+            "start_ms",
+            "end_ms"
+          ],
+          "title": "AudioRef",
+          "type": "object"
+        },
+        "EventType": {
+          "description": "Events the agent pushes to POST /events.",
+          "enum": [
+            "session_start",
+            "caller_claim",
+            "speech_segment",
+            "otp_request",
+            "otp_submit",
+            "session_end"
+          ],
+          "title": "EventType",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "POST /events body.",
+      "properties": {
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "claimed_user_id": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Identity the caller claims. Also selects a mock scenario when the scenario header is absent.",
+          "title": "Claimed User Id"
+        },
+        "event": {
+          "$ref": "#/$defs/EventType"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "occurred_at": {
+          "format": "date-time",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "otp_code": {
+          "anyOf": [
+            {
+              "maxLength": 10,
+              "minLength": 4,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Otp Code"
+        },
+        "sequence": {
+          "description": "Monotonic per session. Replays are idempotent.",
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "session_id": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "event",
+        "sequence",
+        "occurred_at"
+      ],
+      "title": "EventRequest",
+      "type": "object"
+    },
+    "EventResponse": {
+      "$defs": {
+        "Decision": {
+          "description": "What the agent should do right now.",
+          "enum": [
+            "pending",
+            "challenge",
+            "allow",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "Factor": {
+          "additionalProperties": false,
+          "description": "One signal and its contribution.\n\nscore 1.0 means fully consistent with the claimed identity, 0.0 means fully\ninconsistent.",
+          "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Detail"
+            },
+            "name": {
+              "$ref": "#/$defs/FactorName"
+            },
+            "score": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Score",
+              "type": "number"
+            },
+            "verdict": {
+              "$ref": "#/$defs/FactorVerdict"
+            },
+            "weight": {
+              "description": "Relative weight in the blended risk score.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "name",
+            "score",
+            "weight",
+            "verdict"
+          ],
+          "title": "Factor",
+          "type": "object"
+        },
+        "FactorName": {
+          "description": "Independent signals combined into the risk score.",
+          "enum": [
+            "voice_match",
+            "synthetic_speech",
+            "replay",
+            "agent_behaviour",
+            "liveness",
+            "otp"
+          ],
+          "title": "FactorName",
+          "type": "string"
+        },
+        "FactorVerdict": {
+          "enum": [
+            "pass",
+            "fail",
+            "inconclusive",
+            "not_run"
+          ],
+          "title": "FactorVerdict",
+          "type": "string"
+        },
+        "NextAction": {
+          "description": "Concrete instruction, so the agent never has to infer one.",
+          "enum": [
+            "continue_listening",
+            "request_otp",
+            "complete_allow",
+            "complete_deny"
+          ],
+          "title": "NextAction",
+          "type": "string"
+        },
+        "OtpChallenge": {
+          "additionalProperties": false,
+          "description": "Step-up state. Never carries the expected code.",
+          "properties": {
+            "attempts_remaining": {
+              "minimum": 0,
+              "title": "Attempts Remaining",
+              "type": "integer"
+            },
+            "attempts_used": {
+              "minimum": 0,
+              "title": "Attempts Used",
+              "type": "integer"
+            },
+            "code_length": {
+              "default": 6,
+              "maximum": 10,
+              "minimum": 4,
+              "title": "Code Length",
+              "type": "integer"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "title": "Expires At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "attempts_used",
+            "attempts_remaining",
+            "expires_at"
+          ],
+          "title": "OtpChallenge",
+          "type": "object"
+        },
+        "Scenario": {
+          "description": "The five scripted mock scenarios, selectable per request.",
+          "enum": [
+            "real_cfo",
+            "cloned_voice",
+            "replay",
+            "ai_agent",
+            "human_impostor"
+          ],
+          "title": "Scenario",
+          "type": "string"
+        },
+        "SessionState": {
+          "description": "Detector session lifecycle. Terminal states are allowed, denied, expired.",
+          "enum": [
+            "created",
+            "listening",
+            "challenging",
+            "allowed",
+            "denied",
+            "expired"
+          ],
+          "title": "SessionState",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "POST /events 200 response.",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "contract_version": {
+          "default": "0.1.0-provisional",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "factors": {
+          "items": {
+            "$ref": "#/$defs/Factor"
+          },
+          "title": "Factors",
+          "type": "array"
+        },
+        "idempotent_replay": {
+          "default": false,
+          "description": "True when a cached response was returned.",
+          "title": "Idempotent Replay",
+          "type": "boolean"
+        },
+        "latency_ms": {
+          "description": "Server-side handling time.",
+          "minimum": 0,
+          "title": "Latency Ms",
+          "type": "integer"
+        },
+        "next_action": {
+          "$ref": "#/$defs/NextAction"
+        },
+        "otp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OtpChallenge"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "risk_score": {
+          "description": "0.0 safest, 1.0 riskiest.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Risk Score",
+          "type": "number"
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Scenario"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Populated in mock mode only."
+        },
+        "sequence": {
+          "description": "Echoes the request sequence.",
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SessionState"
+        }
+      },
+      "required": [
+        "session_id",
+        "state",
+        "decision",
+        "risk_score",
+        "confidence",
+        "factors",
+        "next_action",
+        "sequence",
+        "latency_ms"
+      ],
+      "title": "EventResponse",
+      "type": "object"
+    },
+    "Factor": {
+      "$defs": {
+        "FactorName": {
+          "description": "Independent signals combined into the risk score.",
+          "enum": [
+            "voice_match",
+            "synthetic_speech",
+            "replay",
+            "agent_behaviour",
+            "liveness",
+            "otp"
+          ],
+          "title": "FactorName",
+          "type": "string"
+        },
+        "FactorVerdict": {
+          "enum": [
+            "pass",
+            "fail",
+            "inconclusive",
+            "not_run"
+          ],
+          "title": "FactorVerdict",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "One signal and its contribution.\n\nscore 1.0 means fully consistent with the claimed identity, 0.0 means fully\ninconsistent.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "name": {
+          "$ref": "#/$defs/FactorName"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Score",
+          "type": "number"
+        },
+        "verdict": {
+          "$ref": "#/$defs/FactorVerdict"
+        },
+        "weight": {
+          "description": "Relative weight in the blended risk score.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Weight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "score",
+        "weight",
+        "verdict"
+      ],
+      "title": "Factor",
+      "type": "object"
+    },
+    "FactorsResponse": {
+      "$defs": {
+        "Decision": {
+          "description": "What the agent should do right now.",
+          "enum": [
+            "pending",
+            "challenge",
+            "allow",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "Factor": {
+          "additionalProperties": false,
+          "description": "One signal and its contribution.\n\nscore 1.0 means fully consistent with the claimed identity, 0.0 means fully\ninconsistent.",
+          "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "maxLength": 500,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Detail"
+            },
+            "name": {
+              "$ref": "#/$defs/FactorName"
+            },
+            "score": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Score",
+              "type": "number"
+            },
+            "verdict": {
+              "$ref": "#/$defs/FactorVerdict"
+            },
+            "weight": {
+              "description": "Relative weight in the blended risk score.",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Weight",
+              "type": "number"
+            }
+          },
+          "required": [
+            "name",
+            "score",
+            "weight",
+            "verdict"
+          ],
+          "title": "Factor",
+          "type": "object"
+        },
+        "FactorName": {
+          "description": "Independent signals combined into the risk score.",
+          "enum": [
+            "voice_match",
+            "synthetic_speech",
+            "replay",
+            "agent_behaviour",
+            "liveness",
+            "otp"
+          ],
+          "title": "FactorName",
+          "type": "string"
+        },
+        "FactorVerdict": {
+          "enum": [
+            "pass",
+            "fail",
+            "inconclusive",
+            "not_run"
+          ],
+          "title": "FactorVerdict",
+          "type": "string"
+        },
+        "NextAction": {
+          "description": "Concrete instruction, so the agent never has to infer one.",
+          "enum": [
+            "continue_listening",
+            "request_otp",
+            "complete_allow",
+            "complete_deny"
+          ],
+          "title": "NextAction",
+          "type": "string"
+        },
+        "OtpChallenge": {
+          "additionalProperties": false,
+          "description": "Step-up state. Never carries the expected code.",
+          "properties": {
+            "attempts_remaining": {
+              "minimum": 0,
+              "title": "Attempts Remaining",
+              "type": "integer"
+            },
+            "attempts_used": {
+              "minimum": 0,
+              "title": "Attempts Used",
+              "type": "integer"
+            },
+            "code_length": {
+              "default": 6,
+              "maximum": 10,
+              "minimum": 4,
+              "title": "Code Length",
+              "type": "integer"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "title": "Expires At",
+              "type": "string"
+            }
+          },
+          "required": [
+            "attempts_used",
+            "attempts_remaining",
+            "expires_at"
+          ],
+          "title": "OtpChallenge",
+          "type": "object"
+        },
+        "Scenario": {
+          "description": "The five scripted mock scenarios, selectable per request.",
+          "enum": [
+            "real_cfo",
+            "cloned_voice",
+            "replay",
+            "ai_agent",
+            "human_impostor"
+          ],
+          "title": "Scenario",
+          "type": "string"
+        },
+        "SessionState": {
+          "description": "Detector session lifecycle. Terminal states are allowed, denied, expired.",
+          "enum": [
+            "created",
+            "listening",
+            "challenging",
+            "allowed",
+            "denied",
+            "expired"
+          ],
+          "title": "SessionState",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "GET /factors/{session_id} 200 response.",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "contract_version": {
+          "default": "0.1.0-provisional",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "events_seen": {
+          "minimum": 0,
+          "title": "Events Seen",
+          "type": "integer"
+        },
+        "factors": {
+          "items": {
+            "$ref": "#/$defs/Factor"
+          },
+          "title": "Factors",
+          "type": "array"
+        },
+        "next_action": {
+          "$ref": "#/$defs/NextAction"
+        },
+        "otp": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OtpChallenge"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "risk_score": {
+          "description": "0.0 safest, 1.0 riskiest.",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Risk Score",
+          "type": "number"
+        },
+        "scenario": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Scenario"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Populated in mock mode only."
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "state",
+        "decision",
+        "risk_score",
+        "confidence",
+        "factors",
+        "next_action",
+        "created_at",
+        "updated_at",
+        "events_seen"
+      ],
+      "title": "FactorsResponse",
+      "type": "object"
+    },
+    "HealthResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "default": "0.1.0-provisional",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "mock_mode": {
+          "title": "Mock Mode",
+          "type": "boolean"
+        },
+        "status": {
+          "const": "ok",
+          "default": "ok",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mock_mode"
+      ],
+      "title": "HealthResponse",
+      "type": "object"
+    },
+    "OtpChallenge": {
+      "additionalProperties": false,
+      "description": "Step-up state. Never carries the expected code.",
+      "properties": {
+        "attempts_remaining": {
+          "minimum": 0,
+          "title": "Attempts Remaining",
+          "type": "integer"
+        },
+        "attempts_used": {
+          "minimum": 0,
+          "title": "Attempts Used",
+          "type": "integer"
+        },
+        "code_length": {
+          "default": 6,
+          "maximum": 10,
+          "minimum": 4,
+          "title": "Code Length",
+          "type": "integer"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempts_used",
+        "attempts_remaining",
+        "expires_at"
+      ],
+      "title": "OtpChallenge",
+      "type": "object"
+    }
+  }
+}

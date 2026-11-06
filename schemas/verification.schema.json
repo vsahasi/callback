@@ -1,0 +1,599 @@
+{
+  "caller_script": {
+    "confirmed": "Thank you, that matches what we have on file. Someone on our side still has to approve the payment before anything moves.",
+    "not_confirmed": "Thank you. We are not able to confirm that over the phone, so a member of our team will follow up before anything is paid."
+  },
+  "enums": {
+    "CallerDisclosure": [
+      "confirmed",
+      "not_confirmed"
+    ],
+    "MatchClass": [
+      "exact",
+      "single_digit_substitution",
+      "adjacent_transposition",
+      "missing_digit",
+      "extra_digit",
+      "unrelated",
+      "unparseable",
+      "not_compared"
+    ],
+    "PaymentAction": [
+      "release_for_approval",
+      "hold_for_review",
+      "block"
+    ],
+    "Verdict": [
+      "verified",
+      "mismatch",
+      "needs_review"
+    ],
+    "VerificationTarget": [
+      "account_number",
+      "sort_code",
+      "routing_number"
+    ]
+  },
+  "models": {
+    "CombinedVerdict": {
+      "$defs": {
+        "CallerDisclosure": {
+          "description": "Everything the caller is allowed to hear. Deliberately two valued.",
+          "enum": [
+            "confirmed",
+            "not_confirmed"
+          ],
+          "title": "CallerDisclosure",
+          "type": "string"
+        },
+        "Decision": {
+          "description": "What the agent should do right now.",
+          "enum": [
+            "pending",
+            "challenge",
+            "allow",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "PaymentAction": {
+          "description": "What happens to the held payment.\n\nNote that `verified` does not pay anyone. A person approves before money\nmoves, so the best outcome this service can produce is \"a human may now\napprove it\".",
+          "enum": [
+            "release_for_approval",
+            "hold_for_review",
+            "block"
+          ],
+          "title": "PaymentAction",
+          "type": "string"
+        },
+        "Verdict": {
+          "description": "The product's vocabulary, exactly as the README states it.",
+          "enum": [
+            "verified",
+            "mismatch",
+            "needs_review"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Voice and details together.\n\nBoth inputs are kept so the bill shows which dimension failed, since\n`mismatch` on its own does not say whether the digits were wrong or the\ncaller was.",
+      "properties": {
+        "caller_disclosure": {
+          "$ref": "#/$defs/CallerDisclosure"
+        },
+        "details_verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "payment_action": {
+          "$ref": "#/$defs/PaymentAction"
+        },
+        "reason": {
+          "maxLength": 500,
+          "title": "Reason",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "verification_version": {
+          "default": "0.1.0-provisional",
+          "title": "Verification Version",
+          "type": "string"
+        },
+        "voice_decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "voice_risk_score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voice Risk Score"
+        }
+      },
+      "required": [
+        "session_id",
+        "voice_decision",
+        "details_verdict",
+        "verdict",
+        "payment_action",
+        "caller_disclosure",
+        "reason"
+      ],
+      "title": "CombinedVerdict",
+      "type": "object"
+    },
+    "VerificationRequest": {
+      "$defs": {
+        "Decision": {
+          "description": "What the agent should do right now.",
+          "enum": [
+            "pending",
+            "challenge",
+            "allow",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "VerificationTarget": {
+          "description": "Which field is being confirmed.\n\nBoth halves of a bank change get read back, so the account number is not\nthe only thing compared.",
+          "enum": [
+            "account_number",
+            "sort_code",
+            "routing_number"
+          ],
+          "title": "VerificationTarget",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "POST body for the details check.\n\nOne field per request. Asking for the account number and the sort code in\nseparate exchanges is how the call actually runs, and it keeps the\ntranscript unambiguous: two numbers in one utterance cannot be split\nreliably.",
+      "properties": {
+        "expected": {
+          "description": "The digits from the vendor's email. Inbound only: this never appears in a response, a log or an error.",
+          "title": "RedactedDigits",
+          "type": "string",
+          "writeOnly": true
+        },
+        "session_id": {
+          "maxLength": 128,
+          "minLength": 8,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/VerificationTarget"
+        },
+        "transcript": {
+          "description": "What the caller said, speech-to-text fragments joined with whitespace.",
+          "maxLength": 2000,
+          "title": "Transcript",
+          "type": "string"
+        },
+        "voice_decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The detector's verdict for this session, if the agent already has it. Absent is treated as pending, which cannot verify."
+        },
+        "voice_risk_score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The detector's blended risk, 0.0 safest.",
+          "title": "Voice Risk Score"
+        }
+      },
+      "required": [
+        "session_id",
+        "target",
+        "expected",
+        "transcript"
+      ],
+      "title": "VerificationRequest",
+      "type": "object"
+    },
+    "VerificationResponse": {
+      "$defs": {
+        "CallerDisclosure": {
+          "description": "Everything the caller is allowed to hear. Deliberately two valued.",
+          "enum": [
+            "confirmed",
+            "not_confirmed"
+          ],
+          "title": "CallerDisclosure",
+          "type": "string"
+        },
+        "CombinedVerdict": {
+          "additionalProperties": false,
+          "description": "Voice and details together.\n\nBoth inputs are kept so the bill shows which dimension failed, since\n`mismatch` on its own does not say whether the digits were wrong or the\ncaller was.",
+          "properties": {
+            "caller_disclosure": {
+              "$ref": "#/$defs/CallerDisclosure"
+            },
+            "details_verdict": {
+              "$ref": "#/$defs/Verdict"
+            },
+            "payment_action": {
+              "$ref": "#/$defs/PaymentAction"
+            },
+            "reason": {
+              "maxLength": 500,
+              "title": "Reason",
+              "type": "string"
+            },
+            "session_id": {
+              "title": "Session Id",
+              "type": "string"
+            },
+            "verdict": {
+              "$ref": "#/$defs/Verdict"
+            },
+            "verification_version": {
+              "default": "0.1.0-provisional",
+              "title": "Verification Version",
+              "type": "string"
+            },
+            "voice_decision": {
+              "$ref": "#/$defs/Decision"
+            },
+            "voice_risk_score": {
+              "anyOf": [
+                {
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Voice Risk Score"
+            }
+          },
+          "required": [
+            "session_id",
+            "voice_decision",
+            "details_verdict",
+            "verdict",
+            "payment_action",
+            "caller_disclosure",
+            "reason"
+          ],
+          "title": "CombinedVerdict",
+          "type": "object"
+        },
+        "Decision": {
+          "description": "What the agent should do right now.",
+          "enum": [
+            "pending",
+            "challenge",
+            "allow",
+            "deny"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "MatchClass": {
+          "description": "The shape of the discrepancy. Never a digit, a position or a length.",
+          "enum": [
+            "exact",
+            "single_digit_substitution",
+            "adjacent_transposition",
+            "missing_digit",
+            "extra_digit",
+            "unrelated",
+            "unparseable",
+            "not_compared"
+          ],
+          "title": "MatchClass",
+          "type": "string"
+        },
+        "PaymentAction": {
+          "description": "What happens to the held payment.\n\nNote that `verified` does not pay anyone. A person approves before money\nmoves, so the best outcome this service can produce is \"a human may now\napprove it\".",
+          "enum": [
+            "release_for_approval",
+            "hold_for_review",
+            "block"
+          ],
+          "title": "PaymentAction",
+          "type": "string"
+        },
+        "Verdict": {
+          "description": "The product's vocabulary, exactly as the README states it.",
+          "enum": [
+            "verified",
+            "mismatch",
+            "needs_review"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "VerificationResult": {
+          "additionalProperties": false,
+          "description": "The details verdict. The operator record that is attached to the bill.\n\nCarries no digit, no position and no length. `match_class` names the shape\nof the discrepancy because the person approving the payment needs it;\n`caller_disclosure` is the only part of this that may be spoken.",
+          "properties": {
+            "attempts_remaining": {
+              "minimum": 0,
+              "title": "Attempts Remaining",
+              "type": "integer"
+            },
+            "attempts_used": {
+              "minimum": 0,
+              "title": "Attempts Used",
+              "type": "integer"
+            },
+            "caller_disclosure": {
+              "$ref": "#/$defs/CallerDisclosure"
+            },
+            "match_class": {
+              "$ref": "#/$defs/MatchClass"
+            },
+            "rate_limited": {
+              "default": false,
+              "description": "True when the attempt cap stopped the comparison.",
+              "title": "Rate Limited",
+              "type": "boolean"
+            },
+            "reason": {
+              "description": "Operator-facing, digit free.",
+              "maxLength": 500,
+              "title": "Reason",
+              "type": "string"
+            },
+            "session_id": {
+              "title": "Session Id",
+              "type": "string"
+            },
+            "target": {
+              "$ref": "#/$defs/VerificationTarget"
+            },
+            "transcript_ambiguous": {
+              "default": false,
+              "description": "True when the wording could mean more than one number.",
+              "title": "Transcript Ambiguous",
+              "type": "boolean"
+            },
+            "verdict": {
+              "$ref": "#/$defs/Verdict"
+            },
+            "verification_version": {
+              "default": "0.1.0-provisional",
+              "title": "Verification Version",
+              "type": "string"
+            }
+          },
+          "required": [
+            "session_id",
+            "target",
+            "verdict",
+            "match_class",
+            "caller_disclosure",
+            "attempts_used",
+            "attempts_remaining",
+            "reason"
+          ],
+          "title": "VerificationResult",
+          "type": "object"
+        },
+        "VerificationTarget": {
+          "description": "Which field is being confirmed.\n\nBoth halves of a bank change get read back, so the account number is not\nthe only thing compared.",
+          "enum": [
+            "account_number",
+            "sort_code",
+            "routing_number"
+          ],
+          "title": "VerificationTarget",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "200 response from the details endpoint.",
+      "properties": {
+        "combined": {
+          "$ref": "#/$defs/CombinedVerdict"
+        },
+        "details": {
+          "$ref": "#/$defs/VerificationResult"
+        },
+        "verification_version": {
+          "default": "0.1.0-provisional",
+          "title": "Verification Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "details",
+        "combined"
+      ],
+      "title": "VerificationResponse",
+      "type": "object"
+    },
+    "VerificationResult": {
+      "$defs": {
+        "CallerDisclosure": {
+          "description": "Everything the caller is allowed to hear. Deliberately two valued.",
+          "enum": [
+            "confirmed",
+            "not_confirmed"
+          ],
+          "title": "CallerDisclosure",
+          "type": "string"
+        },
+        "MatchClass": {
+          "description": "The shape of the discrepancy. Never a digit, a position or a length.",
+          "enum": [
+            "exact",
+            "single_digit_substitution",
+            "adjacent_transposition",
+            "missing_digit",
+            "extra_digit",
+            "unrelated",
+            "unparseable",
+            "not_compared"
+          ],
+          "title": "MatchClass",
+          "type": "string"
+        },
+        "Verdict": {
+          "description": "The product's vocabulary, exactly as the README states it.",
+          "enum": [
+            "verified",
+            "mismatch",
+            "needs_review"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "VerificationTarget": {
+          "description": "Which field is being confirmed.\n\nBoth halves of a bank change get read back, so the account number is not\nthe only thing compared.",
+          "enum": [
+            "account_number",
+            "sort_code",
+            "routing_number"
+          ],
+          "title": "VerificationTarget",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "The details verdict. The operator record that is attached to the bill.\n\nCarries no digit, no position and no length. `match_class` names the shape\nof the discrepancy because the person approving the payment needs it;\n`caller_disclosure` is the only part of this that may be spoken.",
+      "properties": {
+        "attempts_remaining": {
+          "minimum": 0,
+          "title": "Attempts Remaining",
+          "type": "integer"
+        },
+        "attempts_used": {
+          "minimum": 0,
+          "title": "Attempts Used",
+          "type": "integer"
+        },
+        "caller_disclosure": {
+          "$ref": "#/$defs/CallerDisclosure"
+        },
+        "match_class": {
+          "$ref": "#/$defs/MatchClass"
+        },
+        "rate_limited": {
+          "default": false,
+          "description": "True when the attempt cap stopped the comparison.",
+          "title": "Rate Limited",
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "Operator-facing, digit free.",
+          "maxLength": 500,
+          "title": "Reason",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/VerificationTarget"
+        },
+        "transcript_ambiguous": {
+          "default": false,
+          "description": "True when the wording could mean more than one number.",
+          "title": "Transcript Ambiguous",
+          "type": "boolean"
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict"
+        },
+        "verification_version": {
+          "default": "0.1.0-provisional",
+          "title": "Verification Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "target",
+        "verdict",
+        "match_class",
+        "caller_disclosure",
+        "attempts_used",
+        "attempts_remaining",
+        "reason"
+      ],
+      "title": "VerificationResult",
+      "type": "object"
+    }
+  },
+  "policy": {
+    "disclosure_by_verdict": {
+      "mismatch": "not_confirmed",
+      "needs_review": "not_confirmed",
+      "verified": "confirmed"
+    },
+    "leak_substring_digits": 4,
+    "max_near_miss_edits": 1,
+    "max_transcript_chars": 2000,
+    "near_miss_classes": [
+      "adjacent_transposition",
+      "extra_digit",
+      "missing_digit",
+      "single_digit_substitution"
+    ],
+    "near_miss_min_digits": 6,
+    "redacted_placeholder": "<redacted>",
+    "target_digit_rules": {
+      "account_number": [
+        4,
+        20
+      ],
+      "routing_number": [
+        9,
+        9
+      ],
+      "sort_code": [
+        6,
+        6
+      ]
+    },
+    "verdict_by_match": {
+      "adjacent_transposition": "needs_review",
+      "exact": "verified",
+      "extra_digit": "needs_review",
+      "missing_digit": "needs_review",
+      "not_compared": "needs_review",
+      "single_digit_substitution": "needs_review",
+      "unparseable": "needs_review",
+      "unrelated": "mismatch"
+    }
+  },
+  "verification_version": "0.1.0-provisional"
+}
