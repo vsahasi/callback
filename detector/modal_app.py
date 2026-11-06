@@ -18,6 +18,17 @@ Optional overrides, same secret or env:
     CALLBACK_MOCK_JITTER_MIN_MS        default 150
     CALLBACK_MOCK_JITTER_MAX_MS        default 400
 
+Real mode needs two more, and both of them:
+    CALLBACK_MOCK_MODE=0
+    CALLBACK_AUDIO_ENABLED=1
+    CALLBACK_AUDIO_ALLOWED_HOSTS       comma separated, no default
+
+Turning real mode on without naming hosts gives a detector that denies every
+call. That is the safe direction rather than a bug: `uri` arrives in a request
+body, so an unrestricted fetcher is a server-side request forgery primitive
+inside the VPC. See the module docstring of detector/audio.py. A deployment
+that forgot the allowlist says so in the reason on every decision.
+
 Pinned to a single container (min_containers=1, max_containers=1) because the
 default SessionStore keeps sessions in process memory, so the same call routed
 to two containers would become two unrelated sessions, each with its own OTP
@@ -47,6 +58,9 @@ image = (
         # detector/analysis needs this on the serving path.
         "numpy>=1.26",
         "pydantic>=2.9",
+        # detector/audio decodes flac with this. The wheel carries
+        # libsndfile, so the image needs no apt package for it.
+        "soundfile>=0.12",
         "uvicorn[standard]>=0.32",
     )
     .add_local_python_source("shared", "detector")

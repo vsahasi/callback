@@ -10,6 +10,11 @@ dependencies = [
     # torch on the serving path. It is a runtime dependency of the detector,
     # not just of training.
     "numpy>=1.26",
+    # Only the flac branch of detector/audio needs this, but the contract
+    # declares flac, so a deployment without it would refuse a format it
+    # advertises. The wheel bundles libsndfile, so there is no system package
+    # to install alongside it.
+    "soundfile>=0.12",
     "pydantic>=2.9",
     "uvicorn[standard]>=0.32",
 ]
@@ -27,7 +32,6 @@ deploy = [
 ]
 train = [
     "torch>=2.15",
-    "soundfile>=0.12",
 ]
 
 [build-system]

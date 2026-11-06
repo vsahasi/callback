@@ -110,6 +110,7 @@ dependencies = [
     { name = "httpx" },
     { name = "numpy" },
     { name = "pydantic" },
+    { name = "soundfile" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -123,7 +124,6 @@ dev = [
     { name = "ruff" },
 ]
 train = [
-    { name = "soundfile" },
     { name = "torch" },
 ]
 
@@ -137,7 +137,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.17.3,<0.18" },
-    { name = "soundfile", marker = "extra == 'train'", specifier = ">=0.12" },
+    { name = "soundfile", specifier = ">=0.12" },
     { name = "torch", marker = "extra == 'train'", specifier = ">=2.15" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
