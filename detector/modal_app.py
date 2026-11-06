@@ -23,6 +23,10 @@ Real mode needs two more, and both of them:
     CALLBACK_AUDIO_ENABLED=1
     CALLBACK_AUDIO_ALLOWED_HOSTS       comma separated, no default
 
+For voice_match to run at all, vendors have to be enrolled, and for those
+enrolments to outlive a deploy:
+    CALLBACK_ENROLMENT_DICT_NAME       e.g. callback-voiceprints
+
 Turning real mode on without naming hosts gives a detector that denies every
 call. That is the safe direction rather than a bug: `uri` arrives in a request
 body, so an unrestricted fetcher is a server-side request forgery primitive
@@ -40,6 +44,14 @@ docstring on the residual race. modal.Dict has no compare-and-swap, so a lease
 stolen at the wrong moment can lose one update. A monotonic guard keeps the
 cost to one extra OTP attempt recorded, never a fabricated allow, but it is a
 real trade and should be a deliberate decision rather than a config tweak.
+
+The enrolment store has the same seam and none of that difficulty, because a
+voice print is written whole and never built up across requests. Set
+CALLBACK_ENROLMENT_DICT_NAME and reference voices survive a deploy and are
+shared between replicas. Leave it unset and every enrolment is lost on
+restart, which means voice_match silently stops running for every vendor until
+they are enrolled again: that is a fail-closed direction, but a quiet one, so
+set the name before anyone relies on it.
 
 Run it locally instead, no Modal account needed:
 

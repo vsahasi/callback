@@ -25,6 +25,12 @@ line actually the vendor, or is it a clone, a recording, an automated caller or
 a different person? It returns a risk score, the five signals behind it, and one
 of allow, challenge or deny.
 
+Catching "a different person" needs something to compare against, so there is
+a third endpoint: `POST /enrol/voice` stores a reference voice for a vendor,
+taken from a call that was already trusted. It stores a pitch and a spectral
+envelope rather than the recording, so the service never holds a library of
+vendors' voices.
+
 It also offers a second endpoint the agent can call: `POST /verify/bank-details`
 compares the digits the vendor spoke against the expected account number and
 combines that with the voice verdict into verified, mismatch or needs review.
@@ -68,15 +74,37 @@ CALLBACK_API_TOKEN=kit-test CALLBACK_MOCK_MODE=0 CALLBACK_AUDIO_ENABLED=1 uv run
 uv run python examples/drive_real.py --base-url http://127.0.0.1:8021 --token kit-test
 ```
 
-A live caller allows at risk 0.07. The same voice played back down the line
-denies on its room acoustics. A synthesiser reading the same script denies on
-the absence of micro-variation. A call with no readable audio denies too,
-because a caller nothing could be measured against is not a caller who passed.
+That runs every case twice, once with nothing enrolled for the vendor and
+again after storing a reference voice:
 
-In production each span is an https url in your object store, and the bucket
-host has to be named in `CALLBACK_AUDIO_ALLOWED_HOSTS`. The uri comes from the
-request body, so an unrestricted fetcher would be a way into your network.
-`docs/DETECTOR.md` has the threat model and every limit.
+```
+what the caller sent                             not enrolled            enrolled
+a live caller                                      allow 0.07          allow 0.04
+a different person reading the script              allow 0.05      challenge 0.37
+the same voice, played back down the line           deny 0.30           deny 0.17
+a synthesiser reading the same script               deny 0.59      challenge 0.35
+a recording first, then a live voice                deny 0.34           deny 0.20
+no audio at all                                     deny 1.00           deny 1.00
+```
+
+A live caller allows. A replayed recording denies on its room acoustics. A
+call with no readable audio denies too, because a caller nothing could be
+measured against is not a caller who passed.
+
+The second row is the one to read. A different person reading the attacker's
+script is allowed until the vendor has a reference voice, because synthesis,
+replay and liveness all pass a live human at a handset and `voice_match` is
+the only signal that notices. `POST /enrol/voice` stores that reference, once
+per vendor. What it keeps is a pitch and a spectral envelope, never the
+recording: a vendor's voice held indefinitely is biometric data, and nothing
+said in the enrolment call can be recovered from what is stored.
+
+The fourth row goes the other way, and the reason is worth knowing before you
+rely on either number. `docs/DETECTOR.md` has it, along with the threat model
+for the fetcher: each span is an https url in your object store and the bucket
+host has to be named in `CALLBACK_AUDIO_ALLOWED_HOSTS`, because the uri comes
+from the request body and an unrestricted fetcher would be a way into your
+network.
 
 ```bash
 make test                                       # the suite
