@@ -946,3 +946,43 @@ async def test_a_callback_with_no_callback_never_lets_the_change_through(rig, st
     assert await rig.gate.run(BANK_CHANGE) == GateResult("denied", prompts.DENY_HELD)
     assert rig.ramp.calls == [("hold_vendor", "v1")]  # held, and never changed
     assert rig.hangup.ended and state.locked
+
+
+# --- the answer window of a secret ask (redaction) ---
+
+
+async def test_a_challenge_answer_is_exempt_only_while_it_is_asked(
+    stepups, detector, capture, state
+):
+    detector.statuses = iter([PASSED])
+    seen: list[bool] = []
+
+    def answer() -> str:
+        seen.append(state.answer_exempt)
+        return "amber harbor 4 7 2"
+
+    capture.answers = [answer]
+    assert state.answer_exempt is False
+    await run(stepups, VOICE)
+    assert seen == [True]
+    assert state.answer_exempt is False
+
+
+async def test_the_exemption_is_cleared_when_the_ask_fails(stepups, detector, capture, state):
+    capture.answers = [RuntimeError("boom")]
+    with pytest.raises(RuntimeError):
+        await run(stepups, VOICE)
+    assert state.answer_exempt is False
+
+
+async def test_an_otp_answer_is_never_exempt(stepups, detector, capture, state):
+    detector.verdicts = iter([True])
+    seen: list[bool] = []
+
+    def answer() -> str:
+        seen.append(state.answer_exempt)
+        return "four two four two four two"
+
+    capture.answers = [answer]
+    await run(stepups, OTP)
+    assert seen == [False]

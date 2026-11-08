@@ -173,9 +173,13 @@ class StepUps:
         except KeyError:
             raise ValueError(f"a tier {req.tier} action takes no voice challenge") from None
         issued = await self._detector.create_challenge(session_id, kind)
-        answer = await self._capture.ask(
-            f"{lead_in} {issued.say}", timeout_s=CHALLENGE_ANSWER_TIMEOUT_S, secret=True
-        )
+        self._state.answer_exempt = True  # the answer is the digits, and the detector needs them
+        try:
+            answer = await self._capture.ask(
+                f"{lead_in} {issued.say}", timeout_s=CHALLENGE_ANSWER_TIMEOUT_S, secret=True
+            )
+        finally:
+            self._state.answer_exempt = False
         if answer is None:
             logger.info("voice challenge %s: no answer", issued.challenge_id)
             return False

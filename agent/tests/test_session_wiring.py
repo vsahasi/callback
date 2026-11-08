@@ -860,3 +860,52 @@ async def test_a_forwarder_that_fails_to_drain_does_not_stop_the_session_from_en
 
 def test_the_limits_are_what_the_brief_says():
     assert wiring.DRAIN_S == 2.0 and wiring.FORWARDER_CLOSE_S == 3.0
+
+
+# --- redaction of what is forwarded ---
+
+ACCOUNT = FinalSegment(
+    "the account is 0 0 0 1 2 3 4 5 6 7 8 9",
+    0.0,
+    2.0,
+    tuple(
+        (w, 0.1 * i, 0.1 * i + 0.08)
+        for i, w in enumerate("the account is 0 0 0 1 2 3 4 5 6 7 8 9".split())
+    ),
+    t0=1000.0,
+)
+
+
+def test_a_forwarded_user_turn_has_a_bank_number_redacted(wired):
+    turn = message_arrives(wired, ACCOUNT)
+    assert turn.text == "the account is [NUM]"
+    assert [w.w for w in turn.words] == ["the", "account", "is", "[NUM]"]
+
+
+def test_a_forwarded_agent_turn_is_redacted_too(wired):
+    spoken = said("the account ending 6789", role="assistant", created_at=1000.25)
+    wired.session.fire("conversation_item_added", item_added(spoken, created_at=1002.5))
+    assert wired.sent[0].text == "the account ending [NUM]"
+
+
+def test_the_exempt_window_covers_only_the_first_user_turn(wired):
+    wired.state.answer_exempt = True
+    first = message_arrives(wired, spoken_at(1000.0, "four two four two four two"))
+    assert first.text == "four two four two four two"
+    assert wired.state.answer_exempt is False
+    second = message_arrives(wired, spoken_at(1010.0, "four two four two four two"))
+    assert second.text == "[NUM]"
+
+
+def test_an_agent_turn_does_not_use_up_the_window(wired):
+    wired.state.answer_exempt = True
+    spoken = said("please repeat after me", role="assistant", created_at=1000.25)
+    wired.session.fire("conversation_item_added", item_added(spoken, created_at=1002.5))
+    assert wired.state.answer_exempt is True
+
+
+def test_an_agent_turn_is_never_exempt(wired):
+    wired.state.answer_exempt = True
+    spoken = said("four two four two four two", role="assistant", created_at=1000.25)
+    wired.session.fire("conversation_item_added", item_added(spoken, created_at=1002.5))
+    assert wired.sent[0].text == "[NUM]"

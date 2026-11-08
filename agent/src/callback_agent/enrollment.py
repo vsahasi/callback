@@ -160,9 +160,15 @@ class Enrollment:
                     return False
             issued = await self._detector.create_challenge(session_id, ChallengeKind.ENROLL)
             # For an enroll challenge `say` is the whole prompt: no lead-in.
-            answer = await self._capture.ask(
-                issued.say, timeout_s=PROMPT_ANSWER_TIMEOUT_S, secret=True
+            self._state.answer_exempt = (
+                True  # the answer is the digits, and the detector needs them
             )
+            try:
+                answer = await self._capture.ask(
+                    issued.say, timeout_s=PROMPT_ANSWER_TIMEOUT_S, secret=True
+                )
+            finally:
+                self._state.answer_exempt = False
             if answer is None:
                 # Only None: an empty turn is still a turn, and the detector can score it.
                 logger.info(

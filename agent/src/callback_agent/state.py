@@ -33,6 +33,11 @@ class CallState:
     # A deny happened: no tier 1 or 2 request goes through for the rest of the call.
     locked: bool = False
     closing: bool = False  # the call is ending
+    # The caller's next turn answers a secret ask (a voice challenge or an enroll prompt), so its
+    # runs of 4 to 6 digits are the challenge and are forwarded as spoken. Set just before the ask
+    # and cleared right after it. The turn forwarding also clears it on the first user turn, so the
+    # exemption covers one turn and no more.
+    answer_exempt: bool = False
     # A callback is under way: up from CALLBACK_LINE, which tells the caller they'll be called
     # back, until the dial is over. The caller leaving is planned then, so it doesn't end the call.
     callback_in_progress: bool = False
