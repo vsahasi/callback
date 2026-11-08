@@ -9,7 +9,9 @@ from livekit import rtc
 
 _LOWEST_HZ = 100  # keeps DC and mains hum out of the total
 WIDEBAND_RATIO = 0.01  # above this share of energy in 4-8 kHz, the audio is wideband
-_SPEECH_RMS = 0.01 * 32768  # a frame has to be louder than 1% of full scale (16-bit) to count as speech
+_SPEECH_RMS = (
+    0.01 * 32768
+)  # a frame has to be louder than 1% of full scale (16-bit) to count as speech
 
 
 def high_band_ratio(

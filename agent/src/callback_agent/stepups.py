@@ -63,6 +63,7 @@ _CHALLENGE_BY_TIER: dict[int, tuple[ChallengeKind, str]] = {
     2: (ChallengeKind.PHRASE, prompts.CHALLENGE_LEAD_IN_CHANGE),
 }
 
+
 class TurnCapture(Protocol):
     async def say(self, text: str) -> None:
         """Say `text` to the caller and return once it has played. Never interruptible."""

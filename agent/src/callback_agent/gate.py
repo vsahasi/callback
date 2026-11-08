@@ -233,7 +233,9 @@ class Gate:
         return GateResult(outcome.status, outcome.summary)
 
     async def _deny(self, req: ActionRequest) -> GateResult:
-        """Hold the vendor of a tier 1 or 2 request that names one, say whether that took, lock the call and hang up.
+        """Hold the vendor of a tier 1 or 2 request that names one, and say whether that took.
+
+        Then lock the call and hang up.
 
         If the call is closing by the time the hold is done, the caller is gone: it says nothing.
         """

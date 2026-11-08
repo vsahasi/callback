@@ -16,7 +16,9 @@ def frames(signal: np.ndarray, sr: int = SR, ms: int = 50) -> list[rtc.AudioFram
     """Cut a float signal (full scale is 1.0) into mono 16-bit frames, like the room input does."""
     pcm = np.round(signal * 32767).astype(np.int16)
     n = sr * ms // 1000
-    return [rtc.AudioFrame(pcm[i : i + n].tobytes(), sr, 1, n) for i in range(0, len(pcm) - n + 1, n)]
+    return [
+        rtc.AudioFrame(pcm[i : i + n].tobytes(), sr, 1, n) for i in range(0, len(pcm) - n + 1, n)
+    ]
 
 
 def feed(probe: BandwidthProbe, signal: np.ndarray) -> None:
@@ -56,7 +58,7 @@ def test_probe_does_not_count_quiet_frames():
     # RMS of a sine is amplitude / sqrt(2). Amplitude 0.01 is 0.7% of full scale, below the 1% bar.
     feed(probe, tone(6000, 20.0, amplitude=0.01))
     assert probe.verdict() is None
-    # Quiet and loud frames interleaved: only the loud 1 kHz frames count, and only they are measured.
+    # Quiet and loud frames interleaved: only the loud 1 kHz frames count, and are measured.
     for _ in range(25):
         feed(probe, tone(6000, 0.5, amplitude=0.01))
         feed(probe, tone(1000, 0.5))

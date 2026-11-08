@@ -1,4 +1,7 @@
-"""Settings read from the environment. agent.py loads the repo-root .env before anything imports this."""
+"""Settings read from the environment.
+
+agent.py loads the repo-root .env before anything imports this.
+"""
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -38,8 +41,8 @@ class Settings:
     ) -> "Settings":
         """Build the settings from environment variables.
 
-        A blank value counts as unset, because a .env copied from .env.example holds `NAME=` lines and
-        python-dotenv loads those as "". `required` names environment variables (the worker's
+        A blank value counts as unset, because a .env copied from .env.example holds `NAME=` lines
+        and python-dotenv loads those as "". `required` names environment variables (the worker's
         REQUIRED_ENV unless a script asks for fewer); every one that is unset or blank is reported
         in a single ValueError.
         """
@@ -58,7 +61,9 @@ class Settings:
             detector_scenario = Scenario(scenario) if scenario else None
         except ValueError:
             choices = ", ".join(s.value for s in Scenario)
-            raise ValueError(f"DETECTOR_SCENARIO must be one of {choices}, not {scenario!r}") from None
+            raise ValueError(
+                f"DETECTOR_SCENARIO must be one of {choices}, not {scenario!r}"
+            ) from None
 
         return cls(
             agent_name=get("CALLBACK_AGENT_NAME") or DEFAULT_AGENT_NAME,

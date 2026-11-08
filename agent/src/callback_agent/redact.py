@@ -21,8 +21,8 @@ REDACTED = "[NUM]"
 _SEPARATORS = " \t\r\n-,."
 _LONG_RUN = 7  # digits: from here a run is always redacted
 _SHORT_RUN = 4  # digits: from here a run is redacted unless the turn is exempt
-# Words that can sit in a run without being a digit token on their own: "oh" and "o" next to a digit,
-# and "double" and "triple" before one. digit_tokens decides whether they count.
+# Words that can sit in a run without being a digit token on their own: "oh" and "o" next to a
+# digit, and "double" and "triple" before one. digit_tokens decides whether they count.
 _DIGIT_LIKE = {"oh", "o", "double", "triple"}
 _BREAK = "\0"  # stands for a word that is no digit token, in a list of words
 

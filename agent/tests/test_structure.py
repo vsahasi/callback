@@ -116,9 +116,7 @@ def test_only_actions_module_calls_ramp_writes():
     modules = [path for path in sorted(SOURCE.rglob("*.py")) if path.name not in EXEMPT]
     assert len(modules) >= 10  # the scan must find the package, or it passes for the wrong reason
     offenders = {
-        path.name: problems
-        for path in modules
-        if (problems := offences(path.read_text()))
+        path.name: problems for path in modules if (problems := offences(path.read_text()))
     }
     assert offenders == {}
 

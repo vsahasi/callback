@@ -706,9 +706,7 @@ async def test_exclusive_lets_go_of_the_lock_when_its_body_fails(gate, detector,
     assert (await asyncio.wait_for(gate.run(ACCOUNTS), 1)).status == "done"
 
 
-async def test_a_task_cancelled_while_it_waits_for_exclusive_does_not_keep_the_lock(
-    gate, detector
-):
+async def test_a_task_cancelled_while_it_waits_for_exclusive_does_not_keep_the_lock(gate, detector):
     entered, release = asyncio.Event(), asyncio.Event()
     holder = asyncio.create_task(hold_exclusively(gate, entered, release))
     await asyncio.wait_for(entered.wait(), 1)

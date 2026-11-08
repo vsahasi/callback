@@ -1,9 +1,9 @@
 """The LiveKit worker: one AgentSession per call.
 
-The settings are read when this module is imported, because the rtc_session decorator needs the agent
-name, and the detector, Ramp and voice settings are all required. agent.py loads the repo-root .env
-before it imports this. Tests do not import this module, so what a call is built from lives in
-session_wiring.py, where they can reach it, and this module only puts it together.
+The settings are read when this module is imported, because the rtc_session decorator needs the
+agent name, and the detector, Ramp and voice settings are all required. agent.py loads the
+repo-root .env before it imports this. Tests do not import this module, so what a call is built
+from lives in session_wiring.py, where they can reach it, and this module only puts it together.
 """
 
 import asyncio
@@ -67,7 +67,7 @@ def bandwidth_tap(participant: rtc.RemoteParticipant) -> FrameTap:
         if result is None:
             return
         logged = True
-        # The caller's number is personal data, so the log keeps its last four digits and nothing else.
+        # The caller's number is personal data: the log keeps its last four digits and nothing else.
         phone = participant.attributes.get("sip.phoneNumber") or ""
         logger.info(
             "bandwidth probe: %s, high band ratio %.3g",
@@ -101,7 +101,9 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=ctx.proc.userdata["vad"],
         # Flux decides when a turn ends. Preemptive generation stays off so that no tool can fire
         # on a half-finished turn.
-        turn_handling=TurnHandlingOptions(turn_detection="stt", preemptive_generation={"enabled": False}),
+        turn_handling=TurnHandlingOptions(
+            turn_detection="stt", preemptive_generation={"enabled": False}
+        ),
         tool_handling=TOOL_HANDLING,
         userdata=state,
     )
@@ -153,9 +155,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     ctx.add_shutdown_callback(end_forwarding)
     await session.start(
-        agent=CallbackAgent(
-            toolbox=tools.toolbox, call=call, frame_tap=bandwidth_tap(participant)
-        ),
+        agent=CallbackAgent(toolbox=tools.toolbox, call=call, frame_tap=bandwidth_tap(participant)),
         room=ctx.room,
         # Linked to the caller who joined, with the chat topic closed to typed input.
         room_options=build_room_options(participant.identity),
@@ -164,6 +164,6 @@ async def entrypoint(ctx: JobContext) -> None:
         # turn that would answer a pending ask (an SMS code, the consent). With both closed,
         # every answer is spoken, where the detector can hear the voice.
         session_host=False,
-        # Recording is fully off: transcripts hold spoken SMS codes and account numbers (spec: never stored).
+        # Recording is fully off: transcripts hold spoken SMS codes and account numbers.
         record=False,
     )

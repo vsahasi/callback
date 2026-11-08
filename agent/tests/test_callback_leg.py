@@ -12,6 +12,7 @@ import inspect
 import logging
 import re
 import traceback
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -555,10 +556,9 @@ async def test_callback_in_progress_is_set_while_dialing_and_cleared_on_every_pa
     leg, ctx, session, state, events, path
 ):
     path(ctx, session)
-    try:
+    # Some paths raise: this test is about the flag.
+    with suppress(Exception, asyncio.CancelledError):
         await leg.dial_and_link(NUMBER_ON_FILE)
-    except (Exception, asyncio.CancelledError):
-        pass  # some paths raise: this test is about the flag
     assert events and all(event[-1] is True for event in events)  # set from the link on
     assert state.callback_in_progress is False
 

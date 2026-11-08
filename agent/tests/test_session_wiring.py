@@ -870,7 +870,9 @@ ACCOUNT = FinalSegment(
     2.0,
     tuple(
         (w, 0.1 * i, 0.1 * i + 0.08)
-        for i, w in enumerate("the account is 0 0 0 1 2 3 4 5 6 7 8 9".split())
+        for i, w in enumerate(
+            ["the", "account", "is", "0", "0", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+        )
     ),
     t0=1000.0,
 )

@@ -613,7 +613,7 @@ def test_the_entities_client_asks_for_that_scope_and_the_agents_scopes_stay_as_t
     seed_ramp,
 ):
     assert seed_ramp.EntitiesClient.SCOPES == "entities:read"
-    assert RampClient.SCOPES == " ".join(BASE_SCOPES)
+    assert " ".join(BASE_SCOPES) == RampClient.SCOPES
 
 
 async def test_the_agents_token_alone_cannot_read_entities_and_the_seed_says_what_to_do(

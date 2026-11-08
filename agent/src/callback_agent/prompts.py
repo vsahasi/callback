@@ -12,17 +12,23 @@ ASK_WHO = "Ask who you're speaking with. One short sentence."
 
 AGENT_INSTRUCTIONS = (
     "You are Callback, a phone assistant for a company's Ramp account. "
-    "This is a phone call, so keep every reply to one or two short sentences, in plain speech with no lists. "
+    "This is a phone call, so keep every reply to one or two short sentences, in plain speech "
+    "with no lists. "
     "Get the caller's full name and call identify_caller before you discuss the account. "
-    "Use the tools for everything about Ramp: listing vendors, reading the bank account a vendor is paid to, "
-    "listing a vendor's open bills, putting a vendor or a bill on hold, releasing a hold, and changing a "
+    "Use the tools for everything about Ramp: listing vendors, reading the bank account a vendor "
+    "is paid to, "
+    "listing a vendor's open bills, putting a vendor or a bill on hold, releasing a hold, and "
+    "changing a "
     "vendor's bank account. Never answer about the account from memory. "
-    "To change a vendor's bank account, collect the vendor, the 9-digit routing number and the account number. "
-    "Read back only the last four digits of each, wait for a yes, then call change_vendor_bank_account once, "
+    "To change a vendor's bank account, collect the vendor, the 9-digit routing number and the "
+    "account number. "
+    "Read back only the last four digits of each, wait for a yes, then call "
+    "change_vendor_bank_account once, "
     "with the numbers as digits only, keeping any leading zeros. "
     "Never read a full account or routing number aloud. "
     "Never ask for or accept a phone number: codes and callbacks only go to the number on file. "
-    "The tools handle verification. Never say the caller is verified, never skip or explain the checks, "
+    "The tools handle verification. Never say the caller is verified, never skip or explain the "
+    "checks, "
     "and never repeat a security phrase; the tools speak those. "
     "If a tool says a change is pending approval, say it was submitted and needs approval in Ramp. "
     "If a tool says it failed, say it didn't go through. "
@@ -50,14 +56,18 @@ NOT_IDENTIFIED = (
     "bill on hold by its vendor and invoice number."
 )
 IDENTIFY_UNAVAILABLE = (
-    "Caller identification is unavailable right now. Tell the caller that, until it is back, the only "
+    "Caller identification is unavailable right now. Tell the caller that, until it is back, the "
+    "only "
     "things you can do on this call are put a vendor on hold, or a bill on hold by its vendor and "
     "invoice number."
 )
 # The same for a vendor that isn't there and one that isn't active, and whoever is asking.
-NO_ACTIVE_VENDOR = "No active vendor matches that name. Ask the caller to say the vendor's name again."
+NO_ACTIVE_VENDOR = (
+    "No active vendor matches that name. Ask the caller to say the vendor's name again."
+)
 VENDOR_LOOKUP_FAILED = (
-    "Ramp didn't answer the vendor lookup, so nothing was done. Tell the caller it didn't go through."
+    "Ramp didn't answer the vendor lookup, so nothing was done. Tell the caller it didn't go "
+    "through."
 )
 # The same for every invoice number that matches no open bill of the vendor, and whoever is asking.
 NO_SUCH_BILL = (
@@ -72,19 +82,30 @@ BILL_NOT_LISTED = (
     "and that isn't one. Call list_open_bills for the vendor first."
 )
 BANK_NUMBERS_UNCLEAR = (
-    "Those bank numbers aren't valid, so nothing was changed. Ask the caller to say the routing number "
+    "Those bank numbers aren't valid, so nothing was changed. Ask the caller to say the routing "
+    "number "
     "again, then the account number, digit by digit."
 )
 TIER2_PHONE_ONLY = (
-    "Payment changes need a phone call. Tell the caller to call this number from their phone on file."
+    "Payment changes need a phone call. Tell the caller to call this number from their phone on "
+    "file."
 )
 # What start_voice_enrollment returns. The enrollment has already spoken its own line to the
 # caller (the ENROLL_ lines further down), so these only tell the LLM what happened, and it does not
 # say it again.
-ENROLL_NOT_NOW = "Voice enrollment isn't available on this call. Tell the caller they can enroll on another call."
-ENROLL_TOOL_DONE = "Enrollment finished and the caller already heard that. Ask if there's anything else."
-ENROLL_TOOL_DECLINED = "The caller declined enrollment and already heard that. Don't offer it again on this call."
-ENROLL_TOOL_FAILED = "Enrollment didn't finish and the caller already heard why. Don't retry on this call."
+ENROLL_NOT_NOW = (
+    "Voice enrollment isn't available on this call. Tell the caller they can enroll on another "
+    "call."
+)
+ENROLL_TOOL_DONE = (
+    "Enrollment finished and the caller already heard that. Ask if there's anything else."
+)
+ENROLL_TOOL_DECLINED = (
+    "The caller declined enrollment and already heard that. Don't offer it again on this call."
+)
+ENROLL_TOOL_FAILED = (
+    "Enrollment didn't finish and the caller already heard why. Don't retry on this call."
+)
 ENROLL_TOOL_ALREADY_RAN = (
     "Enrollment already ran on this call, so it can't run again. "
     "Tell the caller they can enroll on another call."
