@@ -36,8 +36,9 @@ help: ## Show this help
 install: ## Create .venv with the dev and deploy dependencies
 	$(UV) sync --all-extras
 
-test: ## Run the full test suite
+test: ## Run the full test suite, then the callback_shared contract tests
 	$(UV) run pytest
+	$(UV) run pytest shared/tests -q
 
 lint: ## Lint with ruff and verify formatting, rewriting nothing
 	$(RUFF) check .
@@ -47,8 +48,11 @@ fmt: ## Format with ruff and apply its safe lint fixes
 	$(RUFF) format .
 	$(RUFF) check . --fix
 
+# --no-access-log: an access log line carries the query string, and
+# GET /v1/users?name= puts a caller's name there. The observability layer
+# logs route templates instead.
 run: ## Serve the detector locally with reload (HOST/PORT override the defaults)
-	$(UV) run uvicorn detector.app:app --reload --host $(HOST) --port $(PORT)
+	$(UV) run uvicorn detector.app:app --reload --no-access-log --host $(HOST) --port $(PORT)
 
 snapshot: ## Rewrite the frozen contract schema snapshot
 	CALLBACK_UPDATE_SNAPSHOT=1 $(UV) run pytest tests/contract/test_schema_snapshot.py

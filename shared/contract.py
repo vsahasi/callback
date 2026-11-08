@@ -1,12 +1,16 @@
-"""Callback wire contract between the LiveKit agent and the detector service.
+"""The detector's internal model of its /events dev API and of PR 3.
 
-PROVISIONAL. The Notion "Contract" tab is the source of truth. That tab was not
-reachable when this file was generated (the Notion MCP server is registered but
-not yet authenticated), so every model here is derived from the Day-1 build
-brief: the /events and /factors endpoints, the X-Callback-Scenario header,
-CONTRACT_VERSION, claimed_user_id, the five scripted scenarios and the OTP
-policy. Reconcile against the Contract tab before Veer codes against it, then
-bump CONTRACT_VERSION and refresh the schema snapshot.
+This is NOT the agent contract. The agent and the detector talk over
+callback_shared 1.1.0 (shared/src/callback_shared/contract.py), which the
+detector serves under /v1 (detector/v1). The final contract ruling of
+2026-11-07 kept this file where it is, unrenamed and unchanged in shape, as
+the model of the root /events, /factors and /enrol/voice routes, Eric's offline
+harness and the client kit in shared/client.py.
+
+It was derived from the Day-1 build brief: the /events and /factors
+endpoints, the X-Callback-Scenario header, CONTRACT_VERSION, claimed_user_id,
+the five scripted scenarios and the OTP policy. CONTRACT_VERSION stays at
+0.1.0-provisional and schemas/contract.schema.json stays byte-identical.
 
 Snapshot drift is caught by tests/contract/test_schema_snapshot.py.
 """

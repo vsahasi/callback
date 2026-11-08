@@ -106,6 +106,7 @@ name = "callback-detector"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "callback-shared" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "numpy" },
@@ -129,11 +130,12 @@ train = [
 
 [package.metadata]
 requires-dist = [
+    { name = "callback-shared", editable = "shared" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "modal", marker = "extra == 'deploy'", specifier = ">=1.0" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "pydantic", specifier = ">=2.9" },
+    { name = "pydantic", specifier = ">=2.11,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.17.3,<0.18" },
@@ -142,6 +144,20 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
 provides-extras = ["dev", "deploy", "train"]
+
+[[package]]
+name = "callback-shared"
+version = "1.1.0"
+source = { editable = "shared" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.11,<3" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "cbor2"

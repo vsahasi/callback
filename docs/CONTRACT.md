@@ -1,5 +1,9 @@
 # The detector contract
 
+> This describes the detector's internal `/events` dev API. The agent contract is
+> `callback_shared` 1.1.0 (`shared/src/callback_shared/contract.py`), served under
+> `/v1`; see `docs/DETECTOR.md`.
+
 For Veer, so the LiveKit agent can be written against this without reading the
 service code.
 
@@ -34,11 +38,6 @@ project README says Callback texts a code to the same line. If you own Twilio
 and the code, then `otp_submit` here is you reporting an outcome rather than me
 adjudicating it, and the OTP factor should carry less weight in the blend.
 Confirm the division and I will adjust.
-
-Also note the scenario names (`real_cfo` and friends) came from the build brief
-and read as impersonating a company officer. In this product the impersonated
-party is the vendor, so `real_cfo` means the genuine expected caller. Worth
-renaming once the rest is settled.
 
 The machine-readable version of everything below is
 [`schemas/contract.schema.json`](../schemas/contract.schema.json).

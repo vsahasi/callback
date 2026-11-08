@@ -23,7 +23,138 @@ The contract is frozen by a schema snapshot. Nothing is deployed, and no
 trained model is in the serving path: real mode is signal processing, not
 inference.
 
+## `/v1`: the agent contract
+
+The agent talks to this service over `callback_shared` 1.1.0
+(`shared/src/callback_shared/contract.py`), served under `/v1` by
+`detector/v1`. That file is the only contract between the two sides; the
+final contract ruling of 2026-11-07 settled it. Everything else on this page
+(`/events`, `/factors`, `/enrol/voice*`, `/review`) is the detector's internal
+dev API, which the agent never calls.
+
+Every `/v1` request needs `Authorization: Bearer <DETECTOR_TOKEN>` (checked
+first) and `X-Contract-Version: 1.1.0`. A missing header or another major
+version is a 400 `contract_version_mismatch`; another minor or patch version
+is served, with one warning per version string. Every response carries
+`X-Contract-Version: 1.1.0`, and every non-2xx body is callback_shared's
+`ErrorResponse{contract_version, error: {code, message, detail}}`, which never
+echoes an input value.
+
+| # | Route | Answers |
+|---|---|---|
+| 1 | `GET /v1/users?name=` | 200 `list[UserSummary]`, exact match after normalising |
+| 2 | `GET /v1/users/{user_id}` | 200 `UserOnFile`, 404 `user_not_found` |
+| 3 | `POST /v1/sessions` (+ `X-Callback-Scenario`) | 200 `SessionCreated`; 404, 409 `session_conflict`, 503 `too_many_sessions`, 400 `invalid_scenario` |
+| 4 | `POST /v1/sessions/{id}/caller` | 204 |
+| 5 | `POST /v1/sessions/{id}/turns` | 204, duplicates dropped |
+| 6 | `POST /v1/sessions/{id}/events` | 204 |
+| 7 | `POST /v1/sessions/{id}/challenges` | 200 `ChallengeIssued`; 409 `session_locked`, `no_open_enrollment` |
+| 8 | `GET /v1/sessions/{id}/challenges/{cid}` | 200 `ChallengeStatus`; 404 `challenge_not_found` |
+| 9 | `POST /v1/sessions/{id}/otp/send` | 200 `OtpSent`; 409, 429, 502 `sms_failed`, 503 `otp_unavailable` |
+| 10 | `POST /v1/sessions/{id}/otp/check` | 200 `OtpCheckResult`; 409 `otp_not_sent`, 429 |
+| 11 | `POST /v1/sessions/{id}/authorize` | 200 `Decision`; 409 `idempotency_conflict` |
+| 12 | `POST /v1/sessions/{id}/factors` | 204, the latest report wins |
+| 13 | `POST /v1/sessions/{id}/end` | 204, idempotent |
+| 14 | `POST /v1/enrollments` | 200 `EnrollmentStarted`; 409 `claim_mismatch`, `otp_not_verified`, `session_locked` |
+| 15 | `POST /v1/enrollments/{id}/complete` | 200 `EnrollmentResult`; 404 `enrollment_not_found` |
+| 16 | `DELETE /v1/enrollments/{user_id}` | 204, idempotent, both channels (operator use) |
+
+A route with a session id also answers 404 `session_not_found`, and 409
+`session_ended` once the session has ended (except `/end`).
+
+### Run it locally
+
+```bash
+# terminal 1, repo root
+DETECTOR_TOKEN=dev-local CALLBACK_MOCK_MODE=1 USERS_ON_FILE_PATH=users_on_file.example.json \
+  uv run uvicorn detector.app:app --port 8000 --no-access-log
+
+# terminal 2: the agent's conformance test against it
+cd agent && DETECTOR_URL=http://127.0.0.1:8000 DETECTOR_TOKEN=dev-local \
+  uv run pytest -m mock_detector tests/test_conformance.py tests/test_detector.py -v
+```
+
+`--no-access-log` matters: uvicorn's access log writes the query string, and
+`GET /v1/users?name=` puts a caller's name there. The observability layer logs
+route templates instead (`/v1/sessions/{session_id}/authorize`), never ids or
+query strings. `make run` passes it too.
+
+A quick check by hand:
+
+```bash
+H=(-H "Authorization: Bearer dev-local" -H "X-Contract-Version: 1.1.0")
+curl -s "${H[@]}" "localhost:8000/v1/users?name=Eric%20Catalano"
+curl -s "${H[@]}" -H "X-Callback-Scenario: real_cfo" -H "Content-Type: application/json" \
+  -d '{"room":"r1","caller_identity":"sip_x","claimed_user_id":"u_eric","channel":"phone"}' \
+  localhost:8000/v1/sessions
+```
+
+### Environment
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DETECTOR_TOKEN` | generated, so every call is a 401 | The bearer token. The agent reads the same name. |
+| `CALLBACK_API_TOKEN` | unset | The old name, read only when `DETECTOR_TOKEN` is blank. Both set and different: the process refuses to start. |
+| `CALLBACK_MOCK_MODE` | `true` | Mock mode runs the five scripts below. |
+| `USERS_ON_FILE_JSON` | unset | The user directory, inline JSON. Wins over the path. How the Modal secret supplies it. |
+| `USERS_ON_FILE_PATH` | unset | The user directory as a file. `users_on_file.example.json` is the committed example (a fictional 555-01xx number); the real `users_on_file.json` is gitignored. With neither set the directory is empty and a loud warning is printed. A bad file stops startup. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | unset | Twilio Verify. Real mode answers 503 `otp_unavailable` without all three. |
+| `CALLBACK_MOCK_SMS` | blank | `twilio` makes mock mode send and check through Twilio Verify (when the three are set), for the recording. Blank: mock mode accepts only `424242` and texts nothing. |
+| `CALLBACK_BANK_VERIFY_ENABLED` | off | Mounts `POST /verify/bank-details`. The agent never calls it. |
+| `CALLBACK_MOCK_JITTER_MIN_MS`, `CALLBACK_MOCK_JITTER_MAX_MS` | 150, 400 | Mock latency, slept on every `/v1` route except `/turns`, `/events`, the challenge poll and an idempotent authorize replay. |
+
+### The mock scripts
+
+The scenario is pinned at `POST /v1/sessions` by `X-Callback-Scenario`
+(default `real_cfo`; an unknown value is a 400). They run through the same
+policy a real call would, with no special cases.
+
+| Scenario | Voiceprint | Spoof | Agent | Text, flags | digits / phrase challenge | Demo outcome |
+|---|---|---|---|---|---|---|
+| `real_cfo` | 0.83 | 0.04 | 0.05 | 0.10 | passed, speaker 0.83 | step_up `[voice_challenge, sms_otp, callback_on_file]`, step_up `[voice_challenge]` after `/caller`, then allow |
+| `cloned_voice` | 0.78 | 0.30, then 0.92 from 6.0 s | 0.10 | 0.20 | passed, speaker 0.78 | deny `synthetic_speech` |
+| `replay` | 0.80 | 0.45 | 0.10 | 0.20 | failed, `phrase_match` false | deny `challenge_failed_replay` |
+| `ai_agent` | 0.70 | 0.85 | 0.90 | 0.40 | passed, speaker 0.70 | deny `automated_caller` |
+| `human_impostor` | 0.29 | 0.05 | 0.05 | 0.80, `urgency`, `verification_refusal` | failed, speaker 0.29 | deny `speaker_mismatch` |
+
+Every scenario: the OTP code is `424242`, `enroll` prompts pass, and
+`complete` answers `enrolled` with 7 prompts. A challenge stays `pending` until
+the first user turn received after it was issued and resolves 700 ms later;
+with no turn it expires after 45 s. `tests/v1/test_demo_calls.py` replays all
+five calls of the ruling's section 5 over HTTP.
+
+The first deny locks the session: from then on only holds (tier 0) are
+allowed, and new challenges, codes and enrollments are refused with 409
+`session_locked`. A decision never ends a session; `/end`, 30 minutes or 10
+idle minutes do. At most 5 sessions are live at once.
+
+Real mode has no listener in Round 2, so tier 1 and 2 requests deny with
+`no_audio` and challenges fail with `no_audio`.
+
+### What is never logged
+
+Turn text and words, a challenge `say`, an OTP code, a phone number, the name
+query or any query string, consent text, the Ramp context, and raw room or
+caller identities (logged as a per-process HMAC tag). `tests/v1/test_log_hygiene.py`
+runs Call 1 and an enrollment with sentinel values and checks the stream.
+
+### Deploy
+
+1. Create the Modal secret `callback-detector` with `DETECTOR_TOKEN` (the same
+   value as the agent's), `USERS_ON_FILE_JSON` holding the real number, and
+   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`.
+2. `uv run --extra deploy python scripts/modal_preflight.py`, then
+   `modal deploy detector/modal_app.py`.
+3. Send the URL to the agent side as `DETECTOR_URL`.
+4. After the first deployed call, grep the Modal logs for `name=` and for the
+   phone digits, and confirm both are absent.
+
 ## Two open questions for the contract
+
+Both are settled for the agent by the final contract ruling of 2026-11-07:
+`/v1` decides `allow`, `step_up` or `deny`, and the detector sends and checks
+the SMS code through Twilio Verify (see the `/v1` section above). What follows
+describes the internal `/events` API as it was written.
 
 The wire contract is `0.1.0-provisional`. It was written from the Day-1 build
 brief, not from the Notion Contract tab, which was unreachable at the time. Two
@@ -62,8 +193,8 @@ uv run pytest
 57 tests, under a second. Then run the service:
 
 ```bash
-export CALLBACK_API_TOKEN=any-long-random-string
-uv run uvicorn detector.app:app --port 8000
+export DETECTOR_TOKEN=any-long-random-string
+uv run uvicorn detector.app:app --port 8000 --no-access-log
 ```
 
 ```bash
@@ -82,7 +213,9 @@ curl -s localhost:8000/healthz
 | GET | `/healthz` | Liveness, contract version, mock flag |
 
 Everything except `/healthz` needs `Authorization: Bearer
-<CALLBACK_API_TOKEN>`.
+<DETECTOR_TOKEN>` (or its old name, `CALLBACK_API_TOKEN`).
+`POST /verify/bank-details` is mounted only with
+`CALLBACK_BANK_VERIFY_ENABLED=1`. The agent's routes are under `/v1`, above.
 
 The two enrolment routes that only read are POSTs with the identity in the
 body, which looks wrong and is deliberate: a vendor's user id in a path or a
@@ -114,11 +247,6 @@ The mock OTP code is `424242`. Three attempts, 120 second expiry. Mock mode adds
 150 to 400 ms of simulated latency per request, so client timeout handling gets
 exercised rather than assumed.
 
-Note that the scenario names come from the build brief and read as impersonation
-of a company officer. In this product the impersonated party is the vendor, so
-`real_cfo` means the genuine expected caller. Worth renaming once the contract
-is settled.
-
 ## Fail closed, everywhere
 
 A verification service that fails open is worse than no service. Every failure
@@ -135,7 +263,12 @@ path resolves to DENY:
 ## Layout
 
 ```
-shared/contract.py     Pydantic v2 wire models, CONTRACT_VERSION, client policy
+shared/src/callback_shared/contract.py  The agent contract, callback_shared 1.1.0
+detector/v1/           The agent contract's routes: users, sessions, challenges,
+                       OTP, the authorize policy, enrollment (see /v1 above)
+tests/v1/              The /v1 suites, the five demo calls, log hygiene
+users_on_file.example.json  The example user directory (fictional number)
+shared/contract.py     Internal /events models, CONTRACT_VERSION, client policy
 shared/client.py       Fail-closed reference client for the agent side
 shared/verification.py Spoken digits against the expected number
 shared/enrolment.py    Wire models for storing a reference voice
@@ -403,8 +536,9 @@ to have them enforced from the first byte.
 
 ## Configuration
 
-See `.env.example`. `CALLBACK_API_TOKEN` is the only value with no usable
-default.
+See `.env.example`. `DETECTOR_TOKEN` is the only value with no usable
+default; `/v1` also needs a user directory (`USERS_ON_FILE_PATH` or
+`USERS_ON_FILE_JSON`) to identify anyone.
 
 ## GPU
 
