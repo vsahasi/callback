@@ -124,6 +124,10 @@ class Session:
     polls: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     challenge_kinds: dict[str, str] = field(default_factory=dict)
     enrollment_prompts: int = 0
+    user_turns: int = 0  # user turns accepted so far
+    issued_at_turn: dict[str, int] = field(default_factory=dict)  # user_turns when each was issued
+    current: str | None = None  # the pending challenge, if any
+    refused: int = 0  # challenges that ended unanswered (superseded with no user turn after them)
 
 
 class StubDetector:
@@ -135,16 +139,25 @@ class StubDetector:
         self.log: list[tuple[str, str]] = []
         self.problems: list[str] = []
         self.sessions: dict[str, Session] = {}
+        self.turn_texts: list[str] = []  # the text of each user turn the detector accepted
+        self.fail_turns = False  # answer every /turns with a 500, so the forwarder drops them
+        self.model_refusals = False  # apply the refused-challenge rule instead of the script
         self._ids = itertools.count(1)
         self._challenges = itertools.count(1)
 
     def client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=httpx.MockTransport(self.handle))
 
-    def sequence(self) -> list[str]:
-        """The log as 'METHOD template', with consecutive polls of one challenge folded to one."""
+    def sequence(self, *, turns: bool = False) -> list[str]:
+        """The log as 'METHOD template', with consecutive polls of one challenge folded to one.
+
+        Turns are left out unless asked for: the forwarder posts them in the background, so where
+        they fall between the other calls is not fixed.
+        """
         out: list[str] = []
         for method, template in self.log:
+            if template.endswith("/turns") and not turns:
+                continue
             entry = f"{method} {template}"
             if not (out and out[-1] == entry and template.endswith("{cid}")):
                 out.append(entry)
@@ -198,6 +211,10 @@ class StubDetector:
                 cid = f"chl_{next(self._challenges):016x}"
                 kind = body["kind"]
                 s.challenge_kinds[cid] = kind
+                if s.current is not None and s.issued_at_turn[s.current] == s.user_turns:
+                    s.refused += 1  # superseded, and no user turn came after it (section 2.7)
+                s.issued_at_turn[cid] = s.user_turns
+                s.current = cid
                 say = {"phrase": PHRASE, "digits": DIGITS, "enroll": ENROLL}.get(kind, DIGITS)
                 return _json({"challenge_id": cid, "say": say, "expires_at": 1_700_000_045_000})
             case ("GET", "/v1/sessions/{id}/challenges/{cid}"):
@@ -215,6 +232,9 @@ class StubDetector:
                 | "/v1/sessions/{id}/end",
             ):
                 if template.endswith("/turns"):
+                    if self.fail_turns:
+                        return _error(500, "internal_error")
+                    s.user_turns += body["role"] == "user"
                     self._check_turn(body)
                 return httpx.Response(204)
         return _error(404, "session_not_found")
@@ -226,6 +246,8 @@ class StubDetector:
             return _decide(session_id, action, _decision("allow", [], ["tier0_hold"], 0))
         if s.locked is not None:
             decision = _deny("session_locked", s.locked)
+        elif self.model_refusals:
+            decision = self._by_refusals(s, tier)
         else:
             script = SCRIPT[(s.scenario, tier)]
             decision = script[min(s.authorizes[tier], len(script) - 1)]
@@ -234,7 +256,17 @@ class StubDetector:
                 s.locked = decision["reasons"][0]
         return _decide(session_id, action, decision)
 
+    def _by_refusals(self, s: Session, tier: int) -> dict:
+        """The detector with no answers to its challenges: two refused ones are a deny."""
+        if s.refused >= 2:
+            s.locked = "challenges_refused"
+            return _deny("challenges_refused")
+        return _decision("step_up", ALL_FACTORS if tier == 2 else ["voice_challenge"], [], 120)
+
     def _poll(self, s: Session, cid: str) -> httpx.Response:
+        # A challenge settles only after a user turn was received after it was issued (2.7).
+        if s.user_turns == s.issued_at_turn[cid]:
+            return _json({"status": "pending"})
         s.polls[cid] += 1
         if s.polls[cid] == 1:
             return _json({"status": "pending"})
@@ -245,6 +277,7 @@ class StubDetector:
     def _check_turn(self, turn: dict) -> None:
         # A challenge answer keeps its spoken digits. Anything else with 4 or more digit words
         # must have been redacted to [NUM] before it got here.
+        self.turn_texts.append(turn["text"])
         if turn["text"] == "four two four two four two":
             self.problems.append("an OTP answer was forwarded unredacted")
 

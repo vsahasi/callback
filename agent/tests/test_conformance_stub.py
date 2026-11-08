@@ -13,6 +13,7 @@ from callback_shared.contract import Channel, Scenario
 from conformance_support import (
     ACCOUNTS,
     BANK,
+    assert_held_and_hung_up,
     case_ai_agent,
     case_cloned_voice,
     case_detector_stopped,
@@ -46,24 +47,54 @@ async def test_call_1_real_cfo(detector):
         "POST /v1/sessions",
         "POST /v1/sessions/{id}/authorize",
         "POST /v1/sessions/{id}/challenges",
-        "POST /v1/sessions/{id}/turns",
         "GET /v1/sessions/{id}/challenges/{cid}",
         "POST /v1/sessions/{id}/otp/send",
-        "POST /v1/sessions/{id}/turns",
         "POST /v1/sessions/{id}/otp/check",
         "GET /v1/users/{id}",
         "POST /v1/sessions/{id}/caller",
-        "POST /v1/sessions/{id}/turns",
         "POST /v1/sessions/{id}/factors",
         "POST /v1/sessions/{id}/authorize",
         "POST /v1/sessions/{id}/challenges",
-        "POST /v1/sessions/{id}/turns",
         "GET /v1/sessions/{id}/challenges/{cid}",
         "POST /v1/sessions/{id}/authorize",  # round 3: allow
         "POST /v1/sessions/{id}/authorize",  # the follow-up read
         "POST /v1/sessions/{id}/authorize",  # the hold
         "POST /v1/sessions/{id}/end",
     ]
+    # Four answers, forwarded in the background through the wiring. A challenge answer keeps its
+    # spoken digits, and every other answer has its digits redacted.
+    assert sorted(detector.turn_texts) == sorted(
+        ["four seven two nine one three", "[NUM]", "yes", "four seven two nine one three"]
+    )
+
+
+async def test_a_challenge_answer_that_never_arrives_is_a_refusal_the_detector_denies(detector):
+    # Every post of a turn fails, so the forwarder retries once and drops it. The detector then
+    # sees challenges with no user turn after them. Each poll window ends pending, the gate asks
+    # again, the new challenge supersedes the old, and two such losses deny (2.7 and 2.10).
+    detector.fail_turns = True
+    detector.model_refusals = True
+    async with rig(
+        URL,
+        stub.TOKEN,
+        Scenario.REAL_CFO,
+        http_factory=detector.client,
+        poll_interval_s=0.0,
+        poll_timeout_s=0.02,
+    ) as r:
+        result = await r.run(BANK)
+        assert_held_and_hung_up(r, result)
+        assert [rnd[::2] for rnd in r.client.rounds] == [
+            ("step_up", None),
+            ("step_up", None),
+            ("step_up", None),
+            ("deny", "challenges_refused"),
+        ]
+    assert detector.turn_texts == []  # the detector never saw a user turn
+    posts = [e for e in detector.sequence(turns=True) if e.endswith("/turns")]
+    assert len(posts) >= 6  # each answer was tried twice
+    assert detector.sequence().count("POST /v1/sessions/{id}/challenges") == 3
+    assert "POST /v1/sessions/{id}/otp/send" not in detector.sequence()  # no later factor ran
 
 
 async def test_call_2_cloned_voice(detector):
