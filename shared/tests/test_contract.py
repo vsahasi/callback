@@ -5,8 +5,10 @@ import pytest
 from pydantic import ValidationError
 
 from callback_shared.contract import (
-    ACTION_TIER, AUTHORIZE_TIMEOUT_S, CONTRACT_VERSION_HEADER, RISK_TOPIC, SCENARIO_HEADER,
-    Action, Decision, DecisionKind, Factor, OtpState, Signals, Turn, contract_json_schema,
+    ACTION_TIER, AUTHORIZE_SERVER_DEADLINE_S, AUTHORIZE_TIMEOUT_S, CONTRACT_VERSION,
+    CONTRACT_VERSION_HEADER, MOCK_OTP_CODE, RISK_TOPIC, SCENARIO_HEADER,
+    Action, Decision, DecisionKind, DenyReason, ErrorBody, ErrorCode, ErrorResponse, Factor,
+    OtpState, Signals, Turn, contract_json_schema,
 )
 
 SPEC_DECISION = {  # the Decision example from the spec's Contract tab, with concrete values
@@ -53,6 +55,40 @@ def test_agent_turn_may_have_no_words():
 def test_constants():
     assert (CONTRACT_VERSION_HEADER, SCENARIO_HEADER, RISK_TOPIC, AUTHORIZE_TIMEOUT_S) == (
         "X-Contract-Version", "X-Callback-Scenario", "risk", 3.0)
+
+def test_version_and_new_constants():
+    assert CONTRACT_VERSION == "1.1.0"
+    assert MOCK_OTP_CODE == "424242"
+    assert AUTHORIZE_SERVER_DEADLINE_S == 2.2
+
+def test_error_response_parses():
+    r = ErrorResponse.model_validate(
+        {"contract_version": "1.1.0", "error": {"code": "session_not_found", "message": "x"}})
+    assert r.error.code == "session_not_found"
+    assert r.error.detail is None
+
+def test_error_body_accepts_unknown_code():
+    assert ErrorBody(code="not_in_the_enum", message="x").code == "not_in_the_enum"
+
+def test_deny_reason_values():
+    assert {r.value for r in DenyReason} == {
+        "synthetic_speech", "automated_caller", "challenge_failed_replay", "speaker_mismatch",
+        "otp_failed", "challenges_refused", "callback_denied", "callback_no_answer", "no_audio",
+        "internal_timeout", "session_locked"}
+
+def test_error_code_values():
+    assert {c.value for c in ErrorCode} == {
+        "invalid_scenario", "contract_version_mismatch", "unauthorized", "session_not_found",
+        "user_not_found", "challenge_not_found", "enrollment_not_found", "session_conflict",
+        "session_ended", "session_locked", "idempotency_conflict", "otp_not_sent",
+        "otp_not_verified", "claim_mismatch", "no_open_enrollment", "validation_error",
+        "otp_rate_limited", "internal_error", "sms_failed", "too_many_sessions",
+        "otp_unavailable"}
+
+def test_schema_has_error_models_but_not_constant_enums():
+    models = contract_json_schema()["models"]
+    assert "ErrorBody" in models and "ErrorResponse" in models
+    assert "DenyReason" not in models and "ErrorCode" not in models
 
 def test_schema_matches_snapshot():
     snap = pathlib.Path(__file__).parent / "snapshots" / "contract_schema.json"

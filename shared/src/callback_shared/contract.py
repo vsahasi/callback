@@ -8,6 +8,7 @@ Change this file only together, and regenerate the schema snapshot in the same c
 
 The endpoints are in the Contract tab of docs/spec/2026-11-04-notion-snapshot.md. The D-numbers in
 the notes below point at the decision table in docs/superpowers/plans/2026-11-05-voice-agent.md.
+Settled by the final contract ruling of 2026-11-07; the detector serves it under /v1.
 """
 
 import argparse
@@ -18,11 +19,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "1.1.0"
 CONTRACT_VERSION_HEADER = "X-Contract-Version"  # sent on every request to the detection service
 SCENARIO_HEADER = "X-Callback-Scenario"  # mock mode: picks a scripted demo call on POST /v1/sessions
 RISK_TOPIC = "risk"  # LiveKit data topic that carries a RiskUpdate about every 2 s
 AUTHORIZE_TIMEOUT_S = 3.0  # /authorize answers within this; the agent treats a timeout as deny
+AUTHORIZE_SERVER_DEADLINE_S = 2.2  # past this the detector answers deny internal_timeout
+MOCK_OTP_CODE = "424242"  # the only code mock mode accepts; mock mode texts nothing
 
 
 class Channel(StrEnum):
@@ -112,6 +115,47 @@ ACTION_TIER: dict[Action, int] = {
     Action.RELEASE_VENDOR_HOLD: 2,
     Action.RELEASE_BILL_HOLD: 2,
 }
+
+
+# reasons[0] of every deny the detector sends. Constants only: no model uses it, so it is not in the schema.
+class DenyReason(StrEnum):
+    SYNTHETIC_SPEECH = "synthetic_speech"
+    AUTOMATED_CALLER = "automated_caller"
+    CHALLENGE_FAILED_REPLAY = "challenge_failed_replay"
+    SPEAKER_MISMATCH = "speaker_mismatch"
+    OTP_FAILED = "otp_failed"
+    CHALLENGES_REFUSED = "challenges_refused"
+    CALLBACK_DENIED = "callback_denied"
+    CALLBACK_NO_ANSWER = "callback_no_answer"
+    NO_AUDIO = "no_audio"
+    INTERNAL_TIMEOUT = "internal_timeout"
+    SESSION_LOCKED = "session_locked"
+
+
+# The values ErrorBody.code takes today. ErrorBody.code is a plain str, so a new code is not a break.
+# Constants only: no model uses it, so it is not in the schema.
+class ErrorCode(StrEnum):
+    INVALID_SCENARIO = "invalid_scenario"
+    CONTRACT_VERSION_MISMATCH = "contract_version_mismatch"
+    UNAUTHORIZED = "unauthorized"
+    SESSION_NOT_FOUND = "session_not_found"
+    USER_NOT_FOUND = "user_not_found"
+    CHALLENGE_NOT_FOUND = "challenge_not_found"
+    ENROLLMENT_NOT_FOUND = "enrollment_not_found"
+    SESSION_CONFLICT = "session_conflict"
+    SESSION_ENDED = "session_ended"
+    SESSION_LOCKED = "session_locked"
+    IDEMPOTENCY_CONFLICT = "idempotency_conflict"
+    OTP_NOT_SENT = "otp_not_sent"
+    OTP_NOT_VERIFIED = "otp_not_verified"
+    CLAIM_MISMATCH = "claim_mismatch"
+    NO_OPEN_ENROLLMENT = "no_open_enrollment"
+    VALIDATION_ERROR = "validation_error"
+    OTP_RATE_LIMITED = "otp_rate_limited"
+    INTERNAL_ERROR = "internal_error"
+    SMS_FAILED = "sms_failed"
+    TOO_MANY_SESSIONS = "too_many_sessions"
+    OTP_UNAVAILABLE = "otp_unavailable"
 
 
 # Notes on models and enums are comments, not docstrings: pydantic copies a docstring into the JSON
@@ -295,6 +339,18 @@ class EnrollmentStarted(_Model):
 class EnrollmentResult(_Model):
     status: Literal["enrolled", "failed"]
     prompts_passed: int
+
+
+# The body of every non-2xx response from the detector.
+class ErrorBody(_Model):
+    code: str  # plain str: a code outside ErrorCode still parses
+    message: str
+    detail: str | None = None
+
+
+class ErrorResponse(_Model):
+    contract_version: str
+    error: ErrorBody
 
 
 def _models() -> list[type[_Model]]:

@@ -1,6 +1,6 @@
 [project]
 name = "callback-shared"
-version = "1.0.0"
+version = "1.1.0"
 requires-python = ">=3.11"
 # 2.11 is the oldest pydantic that renders the contract's JSON schema the way the snapshot test
 # expects. 2.9 and 2.10 differ in two places, so do not lower this floor.
