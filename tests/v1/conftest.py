@@ -29,7 +29,14 @@ EXAMPLE_USERS: dict[str, Any] = {
         {
             "user_id": "u_eric",
             "display_name": "Eric Catalano",
-            "aliases": [],
+            # How speech-to-text may spell the name (integration review M9).
+            "aliases": [
+                "Erik Catalano",
+                "Eric Catalono",
+                "Erik Catalono",
+                "Eric Catalina",
+                "Eric Cattalano",
+            ],
             "role": "CFO",
             "phone_e164": "+15555550100",
         }

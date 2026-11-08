@@ -160,6 +160,11 @@ unknown id is a 404 `session_not_found`.
 1. Create the Modal secret `callback-detector` with `DETECTOR_TOKEN` (the same
    value as the agent's), `USERS_ON_FILE_JSON` holding the real number, and
    `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`.
+   Give every user in `USERS_ON_FILE_JSON` `aliases` for how speech-to-text
+   may spell their name ("Erik Catalano", "Eric Catalono", and so on, as in
+   `users_on_file.example.json`). Name search is an exact match after
+   normalising, so a spelling that is not listed finds nobody and the call
+   stalls at identification.
 2. `uv run --extra deploy python scripts/modal_preflight.py`, then
    `modal deploy detector/modal_app.py`.
 3. Send the URL to the agent side as `DETECTOR_URL`.

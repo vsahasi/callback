@@ -1,1 +1,1 @@
-{"users": [{"user_id": "u_eric", "display_name": "Eric Catalano", "aliases": [], "role": "CFO", "phone_e164": "+15555550100"}]}
+{"users": [{"user_id": "u_eric", "display_name": "Eric Catalano", "aliases": ["Erik Catalano", "Eric Catalono", "Erik Catalono", "Eric Catalina", "Eric Cattalano"], "role": "CFO", "phone_e164": "+15555550100"}]}
