@@ -29,7 +29,9 @@ export function mapV1Row(raw: unknown): Row | null {
   if (!r || !id) return null;
   return {
     session_id: id,
-    decision: str(r.last_decision),
+    // A locked session has been denied at some point. A later tier 0 hold is
+    // allowed even then, so never let it show as an allow.
+    decision: r.locked === true && r.last_decision === "allow" ? "deny" : str(r.last_decision),
     who: str(r.claimed_user_id),
     at: str(r.created_at) ?? str(r.updated_at) ?? "",
     risk: null,
@@ -163,7 +165,11 @@ export function mapV1Detail(raw: unknown): V1View | null {
 
   const rawDecisions = arr(r.decisions);
   const decisions = rawDecisions.map(mapDecision).filter((d): d is DecisionRow => d !== null);
-  const latest = obj(rawDecisions[rawDecisions.length - 1]);
+  // Tier 0 holds are background housekeeping that the detector always allows.
+  // The headline is the newest decision that was not one, else the newest.
+  const mapped = rawDecisions.map(obj);
+  const latest = [...mapped].reverse().find((d) => d && d.tier !== 0) ?? mapped[mapped.length - 1] ?? null;
+  const headline = latest ? mapDecision(latest) : null;
 
   const challenges: ChallengeView[] = arr(r.challenges)
     .map(obj)
@@ -192,20 +198,24 @@ export function mapV1Detail(raw: unknown): V1View | null {
     .filter((f): f is Raw => f !== null && f.kind === "callback")
     .map((f) => ({ result: str(f.result) ?? "", at: str(f.at) }));
 
-  const reasons = strs(r.last_reasons);
+  const locked = r.locked === true;
+  let reasons = headline ? headline.reasons : strs(r.last_reasons);
+  // On a locked call the first reason is "session_locked"; the cause is next.
+  if (reasons[0] === "session_locked" && reasons.length > 1) reasons = reasons.slice(1);
+  const lastDecision = headline?.decision ?? str(r.last_decision);
   return {
     kind: "v1",
     session_id: id,
-    decision: str(r.last_decision),
+    decision: locked && lastDecision === "allow" ? "deny" : lastDecision,
     reason: reasons[0] ?? null,
     more_reasons: reasons.slice(1),
-    last_action: str(r.last_action),
+    last_action: headline?.action ?? str(r.last_action),
     claimed_user_id: str(r.claimed_user_id),
     channel: str(r.channel),
     scenario: str(r.scenario),
     created_at: str(r.created_at),
     updated_at: str(r.updated_at),
-    locked: r.locked === true,
+    locked,
     ended: r.ended === true,
     layers: layersFromSignals(latest?.signals),
     decisions,

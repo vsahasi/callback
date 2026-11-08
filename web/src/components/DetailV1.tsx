@@ -45,7 +45,7 @@ export function DetailV1({
           )}
           <p className="next">
             <span>Last action</span> <b>{titleCase(v.last_action) || "none"}</b>
-            <span className="sep" /> <span>Caller claims</span> <b>{v.claimed_user_id ?? "unknown"}</b>
+            <span className="sep" /> <span>Caller claims</span> <b style={{ textTransform: "none" }}>{v.claimed_user_id ?? "unknown"}</b>
             {v.channel && (
               <>
                 <span className="sep" /> <span>Channel</span> <b>{v.channel}</b>
@@ -134,7 +134,9 @@ function LayerRow({ l }: { l: Layer }) {
 }
 
 function StepUps({ v }: { v: V1View }) {
-  const any = v.challenges.length > 0 || v.otp !== null || v.callbacks.length > 0;
+  // An SMS code that was never sent is not a step-up the caller went through.
+  const otp = v.otp && (v.otp.sent || v.otp.verified !== null || (v.otp.attempts ?? 0) > 0) ? v.otp : null;
+  const any = v.challenges.length > 0 || otp !== null || v.callbacks.length > 0;
   if (!any) return <p className="dim">No step-up has been attempted.</p>;
   return (
     <div className="steps">
@@ -149,13 +151,13 @@ function StepUps({ v }: { v: V1View }) {
           </p>
         </div>
       ))}
-      {v.otp && (
-        <div className={`step ${v.otp.verified ? "s-passed" : v.otp.sent ? "s-pending" : "s-none"}`}>
+      {otp && (
+        <div className={`step ${otp.verified ? "s-passed" : otp.sent ? "s-pending" : "s-none"}`}>
           <b>SMS code</b>
-          <span className="res">{v.otp.verified ? "verified" : v.otp.sent ? "not verified" : "not sent"}</span>
+          <span className="res">{otp.verified ? "verified" : otp.sent ? "not verified" : "not sent"}</span>
           <p>
-            {v.otp.sent && v.otp.last_four && <>Sent to ending {v.otp.last_four}. </>}
-            {v.otp.attempts !== null && <>Attempts: {v.otp.attempts}.</>}
+            {otp.sent && otp.last_four && <>Sent to ending {otp.last_four}. </>}
+            {otp.attempts !== null && <>Attempts: {otp.attempts}.</>}
           </p>
         </div>
       )}

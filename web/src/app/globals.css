@@ -187,3 +187,5 @@ time { color: var(--dim); font: 500 14px var(--mono); }
 .s-passed { border-color: var(--allow); } .s-passed .res { color: var(--allow); }
 .s-failed, .s-expired { border-color: var(--deny); } .s-failed .res, .s-expired .res { color: var(--deny); }
 .s-pending { border-color: var(--chal); } .s-pending .res { color: var(--chal); }
+.score .big { display: block; }
+.next { line-height: 1.8; }

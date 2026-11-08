@@ -1,0 +1,111 @@
+{
+ "session_id": "ses_688ba7e812d9555f4ad90e4af28b26fc",
+ "created_at": "2026-11-08T05:36:31.477322+00:00",
+ "updated_at": "2026-11-08T05:36:33.544564+00:00",
+ "scenario": "replay",
+ "claimed_user_id": "u_eric",
+ "channel": "phone",
+ "last_decision": "deny",
+ "last_action": "update_vendor_bank_account",
+ "last_reasons": [
+  "challenge_failed_replay",
+  "phrase_match false",
+  "voiceprint_pass 0.80\u22650.62",
+  "spoof_mid 0.45",
+  "text_low 0.20"
+ ],
+ "locked": true,
+ "ended": true,
+ "decisions": [
+  {
+   "at": "2026-11-08T05:36:31.874881+00:00",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "step_up",
+   "reasons": [
+    "voiceprint_pass 0.80\u22650.62",
+    "spoof_mid 0.45",
+    "text_low 0.20"
+   ],
+   "required_factors": [
+    "voice_challenge",
+    "sms_otp",
+    "callback_on_file"
+   ],
+   "ttl_s": 120,
+   "idempotency_key": "f8dbcd214ea2f223d347cdeb31e47c58",
+   "signals": {
+    "voiceprint": {
+     "score": 0.8,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": null
+    },
+    "deepfake": {
+     "spoof_prob": 0.45,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.2,
+     "flags": []
+    },
+    "agent_likelihood": 0.1,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T05:36:33.248720+00:00",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "deny",
+   "reasons": [
+    "challenge_failed_replay",
+    "phrase_match false",
+    "voiceprint_pass 0.80\u22650.62",
+    "spoof_mid 0.45",
+    "text_low 0.20"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "8184db33ce8b0abfc8912a006b0065be",
+   "signals": {
+    "voiceprint": {
+     "score": 0.8,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": false
+    },
+    "deepfake": {
+     "spoof_prob": 0.45,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.2,
+     "flags": []
+    },
+    "agent_likelihood": 0.1,
+    "otp": "n/a"
+   }
+  }
+ ],
+ "challenges": [
+  {
+   "challenge_id": "chl_97035aac4f86a4eb",
+   "kind": "phrase",
+   "status": "failed",
+   "phrase_match": false,
+   "speaker_score": 0.8,
+   "reason": "phrase_mismatch",
+   "issued_at": "2026-11-08T05:36:32.189206+00:00",
+   "resolved_at": "2026-11-08T05:36:32.896664+00:00"
+  }
+ ],
+ "otp": {
+  "sent": false,
+  "sent_to_last_four": null,
+  "attempts": 0,
+  "verified": null
+ },
+ "factors": [],
+ "events": []
+}

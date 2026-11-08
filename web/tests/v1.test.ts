@@ -33,10 +33,13 @@ describe("v1 list mapping", () => {
 
 describe("v1 detail mapping", () => {
   it("real_cfo: allow after step-up, with all step-ups", () => {
-    const v = mapV1Detail(fx("sessions/sess-demo-real-cfo.json"))!;
+    const v = mapV1Detail(fx("sessions/ses_f837c5514f1e252cccd1d812c26a0bd3.json"))!;
     expect(v.decision).toBe("allow");
+    // The newest decision is a tier 0 hold; the headline skips it.
+    expect(v.decisions[v.decisions.length - 1].tier).toBe(0);
+    expect(v.last_action).toBe("list_vendor_accounts");
     expect(v.reason).toBe("voiceprint_pass 0.83≥0.62");
-    expect(v.decisions.map((d) => d.decision)).toEqual(["allow", "step_up", "step_up", "allow", "allow"]);
+    expect(v.decisions.map((d) => d.decision)).toEqual(["step_up", "step_up", "allow", "allow", "allow"]);
     expect(v.otp).toMatchObject({ sent: true, last_four: "0100", attempts: 1, verified: true });
     expect(v.callbacks[0].result).toBe("confirmed");
     expect(v.challenges[0]).toMatchObject({ status: "passed", phrase_match: true, speaker_score: 0.83 });
@@ -47,18 +50,38 @@ describe("v1 detail mapping", () => {
     expect(agent.value).toBe(0.05);
   });
   it("cloned_voice: deny, high spoof, voiceprint alone passes", () => {
-    const v = mapV1Detail(fx("sessions/sess-demo-cloned.json"))!;
+    const v = mapV1Detail(fx("sessions/ses_be439b8fe8c87fe31f0fa3fc9c395b91.json"))!;
     expect(v.decision).toBe("deny");
     expect(v.locked).toBe(true);
     expect(v.layers[0]).toMatchObject({ tone: "bad", verdict: "high", value: 0.92 });
     expect(v.layers[1].verdict).toBe("pass");
   });
   it("human_impostor: failed speaker challenge, flag chips", () => {
-    const v = mapV1Detail(fx("sessions/sess-demo-impostor.json"))!;
+    const v = mapV1Detail(fx("sessions/ses_42f17f1a89bf5b1deaba0d3c4892252a.json"))!;
     expect(v.decision).toBe("deny");
     expect(v.challenges[0]).toMatchObject({ status: "failed", phrase_match: true, reason: "speaker_mismatch" });
     expect(v.layers[1]).toMatchObject({ tone: "bad", verdict: "fail" });
     expect(v.layers[2].chips).toEqual(["urgency", "verification_refusal"]);
+  });
+  it("captured session with no decisions renders as no decision, not allow", () => {
+    const list = mapV1List(fx("sessions.json"));
+    const empty = list.sessions.filter((r) => r.decision === null);
+    expect(empty.length).toBeGreaterThan(0);
+    const v = mapV1Detail(fx(`sessions/${empty[0].session_id}.json`))!;
+    expect(v.decision).toBeNull();
+    expect(decisionLabel(v.decision)).toBe("NO DECISION YET");
+  });
+  it("a locked session never reads as allow, even if the last decision is a tier 0 hold", () => {
+    expect(mapV1List({ sessions: [{ session_id: "s", locked: true, last_decision: "allow" }] }).sessions[0].decision).toBe("deny");
+    const v = mapV1Detail({ session_id: "s", locked: true, last_decision: "allow", decisions: [
+      { at: "t", action: "hold_vendor", tier: 0, decision: "allow", reasons: ["tier0_hold"], signals: null }] })!;
+    expect(v.decision).toBe("deny");
+  });
+  it("on a locked call the cause, not session_locked, is the reason", () => {
+    const v = mapV1Detail({ session_id: "s", locked: true, decisions: [
+      { at: "t", action: "list_vendors", tier: 1, decision: "deny", reasons: ["session_locked", "synthetic_speech", "spoof_high 0.92"], signals: null }] })!;
+    expect(v.reason).toBe("synthetic_speech");
+    expect(v.more_reasons).toEqual(["spoof_high 0.92"]);
   });
   it("a session with no decisions yet has no decision and empty layers", () => {
     const v = mapV1Detail({

@@ -27,6 +27,12 @@ export function Dashboard() {
     selected ? `/api/sessions/${encodeURIComponent(selected)}` : null,
   );
 
+  // /?session=<id> opens a specific call, for linking and screenshots.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("session");
+    if (id) setPicked(id);
+  }, []);
+
   useEffect(() => {
     if (theme) {
       document.documentElement.dataset.theme = theme;

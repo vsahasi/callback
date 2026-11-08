@@ -43,10 +43,9 @@ newest", to follow again.
 With `DASHBOARD_FIXTURES=1` or no `DETECTOR_URL`, the routes serve recorded
 JSON and the header shows SAMPLE DATA instead of LIVE. Nothing else needs to run.
 
-- `fixtures/v1/` is the default. It is hand-built from the v1 contract (a
-  real_cfo allow after step-up, a cloned_voice deny, a human_impostor deny with
-  a failed speaker challenge), not captured from a detector. Replace it with
-  captured responses once the detector's v1 review endpoints are running.
+- `fixtures/v1/` is the default. It holds real responses captured from the mock
+  detector's `/review/api/v1` endpoints after the five demo calls were run through
+  the agent's conformance test.
 - `fixtures/sessions.json` and `fixtures/sessions/` are captured from the mock
   detector's older review API and are used with `DASHBOARD_SOURCE=events`.
 

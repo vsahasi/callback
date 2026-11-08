@@ -1,13 +1,14 @@
 {
- "session_id": "sess-demo-cloned",
- "created_at": "2026-11-08T18:14:00.000000Z",
- "updated_at": "2026-11-08T18:14:12.000000Z",
+ "session_id": "ses_1d0862a050afd39efe7446590e16f31d",
+ "created_at": "2026-11-08T05:36:15.106678+00:00",
+ "updated_at": "2026-11-08T05:36:23.143368+00:00",
  "scenario": "cloned_voice",
- "claimed_user_id": "u_priya",
+ "claimed_user_id": "u_eric",
  "channel": "phone",
  "last_decision": "deny",
  "last_action": "update_vendor_bank_account",
  "last_reasons": [
+  "session_locked",
   "synthetic_speech",
   "voiceprint_pass 0.78\u22650.62",
   "spoof_high 0.92",
@@ -17,43 +18,7 @@
  "ended": true,
  "decisions": [
   {
-   "at": "2026-11-08T18:14:04.000000Z",
-   "action": "update_vendor_bank_account",
-   "tier": 2,
-   "decision": "step_up",
-   "reasons": [
-    "voiceprint_pass 0.78\u22650.62",
-    "spoof_mid 0.30",
-    "text_low 0.20"
-   ],
-   "required_factors": [
-    "voice_challenge",
-    "sms_otp",
-    "callback_on_file"
-   ],
-   "ttl_s": 120,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000015445",
-   "signals": {
-    "voiceprint": {
-     "score": 0.78,
-     "threshold": 0.62,
-     "passed": true,
-     "phrase_match": null
-    },
-    "deepfake": {
-     "spoof_prob": 0.3,
-     "windows": 8
-    },
-    "text": {
-     "risk": 0.2,
-     "flags": []
-    },
-    "agent_likelihood": 0.1,
-    "otp": "n/a"
-   }
-  },
-  {
-   "at": "2026-11-08T18:14:09.000000Z",
+   "at": "2026-11-08T05:36:21.909295+00:00",
    "action": "update_vendor_bank_account",
    "tier": 2,
    "decision": "deny",
@@ -65,13 +30,13 @@
    ],
    "required_factors": [],
    "ttl_s": 0,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000017334",
+   "idempotency_key": "836404b7d2971f76b17cb1ea57a9bbf9",
    "signals": {
     "voiceprint": {
      "score": 0.78,
      "threshold": 0.62,
      "passed": true,
-     "phrase_match": true
+     "phrase_match": null
     },
     "deepfake": {
      "spoof_prob": 0.92,
@@ -86,7 +51,7 @@
    }
   },
   {
-   "at": "2026-11-08T18:14:10.000000Z",
+   "at": "2026-11-08T05:36:22.237407+00:00",
    "action": "hold_vendor",
    "tier": 0,
    "decision": "allow",
@@ -95,13 +60,81 @@
    ],
    "required_factors": [],
    "ttl_s": 0,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000019223",
+   "idempotency_key": "hold-1",
    "signals": {
     "voiceprint": {
      "score": 0.78,
      "threshold": 0.62,
      "passed": true,
-     "phrase_match": true
+     "phrase_match": null
+    },
+    "deepfake": {
+     "spoof_prob": 0.92,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.2,
+     "flags": []
+    },
+    "agent_likelihood": 0.1,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T05:36:22.645659+00:00",
+   "action": "list_vendor_accounts",
+   "tier": 1,
+   "decision": "deny",
+   "reasons": [
+    "session_locked",
+    "synthetic_speech",
+    "voiceprint_pass 0.78\u22650.62",
+    "spoof_high 0.92",
+    "text_low 0.20"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "lock-1",
+   "signals": {
+    "voiceprint": {
+     "score": 0.78,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": null
+    },
+    "deepfake": {
+     "spoof_prob": 0.92,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.2,
+     "flags": []
+    },
+    "agent_likelihood": 0.1,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T05:36:22.854672+00:00",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "deny",
+   "reasons": [
+    "session_locked",
+    "synthetic_speech",
+    "voiceprint_pass 0.78\u22650.62",
+    "spoof_high 0.92",
+    "text_low 0.20"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "lock-2",
+   "signals": {
+    "voiceprint": {
+     "score": 0.78,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": null
     },
     "deepfake": {
      "spoof_prob": 0.92,
@@ -116,33 +149,13 @@
    }
   }
  ],
- "challenges": [
-  {
-   "challenge_id": "ch-clone-1",
-   "kind": "phrase",
-   "status": "passed",
-   "phrase_match": true,
-   "speaker_score": 0.78,
-   "reason": null,
-   "issued_at": "2026-11-08T18:14:05.000000Z",
-   "resolved_at": "2026-11-08T18:14:08.000000Z"
-  }
- ],
+ "challenges": [],
  "otp": {
   "sent": false,
   "sent_to_last_four": null,
   "attempts": 0,
-  "verified": false
+  "verified": null
  },
  "factors": [],
- "events": [
-  {
-   "type": "agent_speech_start",
-   "at": "2026-11-08T18:14:02.000000Z"
-  },
-  {
-   "type": "user_speech_start",
-   "at": "2026-11-08T18:14:03.000000Z"
-  }
- ]
+ "events": []
 }

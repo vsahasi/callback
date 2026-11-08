@@ -1,31 +1,35 @@
 {
- "session_id": "sess-demo-real-cfo",
- "created_at": "2026-11-08T18:10:00.000000Z",
- "updated_at": "2026-11-08T18:11:41.000000Z",
+ "session_id": "ses_f837c5514f1e252cccd1d812c26a0bd3",
+ "created_at": "2026-11-08T05:36:09.424168+00:00",
+ "updated_at": "2026-11-08T05:36:14.436787+00:00",
  "scenario": "real_cfo",
  "claimed_user_id": "u_eric",
  "channel": "phone",
  "last_decision": "allow",
- "last_action": "list_vendor_accounts",
+ "last_action": "hold_vendor",
  "last_reasons": [
-  "voiceprint_pass 0.83\u22650.62",
-  "spoof_low 0.04",
-  "text_low 0.10"
+  "tier0_hold"
  ],
  "locked": false,
  "ended": true,
  "decisions": [
   {
-   "at": "2026-11-08T18:10:06.000000Z",
-   "action": "hold_vendor",
-   "tier": 0,
-   "decision": "allow",
+   "at": "2026-11-08T05:36:09.663695+00:00",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "step_up",
    "reasons": [
-    "tier0_hold"
+    "voiceprint_pass 0.83\u22650.62",
+    "spoof_low 0.04",
+    "text_low 0.10"
    ],
-   "required_factors": [],
-   "ttl_s": 0,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000001eef",
+   "required_factors": [
+    "voice_challenge",
+    "sms_otp",
+    "callback_on_file"
+   ],
+   "ttl_s": 120,
+   "idempotency_key": "dba6e8b2391cb95631ee5f2da758d519",
    "signals": {
     "voiceprint": {
      "score": 0.83,
@@ -46,43 +50,7 @@
    }
   },
   {
-   "at": "2026-11-08T18:10:14.000000Z",
-   "action": "update_vendor_bank_account",
-   "tier": 2,
-   "decision": "step_up",
-   "reasons": [
-    "voiceprint_pass 0.83\u22650.62",
-    "spoof_low 0.04",
-    "text_low 0.10"
-   ],
-   "required_factors": [
-    "voice_challenge",
-    "sms_otp",
-    "callback_on_file"
-   ],
-   "ttl_s": 120,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000003dde",
-   "signals": {
-    "voiceprint": {
-     "score": 0.83,
-     "threshold": 0.62,
-     "passed": true,
-     "phrase_match": true
-    },
-    "deepfake": {
-     "spoof_prob": 0.04,
-     "windows": 8
-    },
-    "text": {
-     "risk": 0.1,
-     "flags": []
-    },
-    "agent_likelihood": 0.05,
-    "otp": "n/a"
-   }
-  },
-  {
-   "at": "2026-11-08T18:10:58.000000Z",
+   "at": "2026-11-08T05:36:12.409832+00:00",
    "action": "update_vendor_bank_account",
    "tier": 2,
    "decision": "step_up",
@@ -95,7 +63,7 @@
     "voice_challenge"
    ],
    "ttl_s": 120,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000005ccd",
+   "idempotency_key": "66b7115be16294babe16077991b9f781",
    "signals": {
     "voiceprint": {
      "score": 0.83,
@@ -116,7 +84,7 @@
    }
   },
   {
-   "at": "2026-11-08T18:11:21.000000Z",
+   "at": "2026-11-08T05:36:13.681853+00:00",
    "action": "update_vendor_bank_account",
    "tier": 2,
    "decision": "allow",
@@ -127,7 +95,7 @@
    ],
    "required_factors": [],
    "ttl_s": 60,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000007bbc",
+   "idempotency_key": "60a3ad1b2d9c47a78f98b063c94c2753",
    "signals": {
     "voiceprint": {
      "score": 0.83,
@@ -148,7 +116,7 @@
    }
   },
   {
-   "at": "2026-11-08T18:11:36.000000Z",
+   "at": "2026-11-08T05:36:13.880447+00:00",
    "action": "list_vendor_accounts",
    "tier": 1,
    "decision": "allow",
@@ -159,7 +127,37 @@
    ],
    "required_factors": [],
    "ttl_s": 300,
-   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000009aab",
+   "idempotency_key": "22e52806d336e88c11695e5daf131fab",
+   "signals": {
+    "voiceprint": {
+     "score": 0.83,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.04,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.1,
+     "flags": []
+    },
+    "agent_likelihood": 0.05,
+    "otp": "verified"
+   }
+  },
+  {
+   "at": "2026-11-08T05:36:14.205448+00:00",
+   "action": "hold_vendor",
+   "tier": 0,
+   "decision": "allow",
+   "reasons": [
+    "tier0_hold"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "hold-1",
    "signals": {
     "voiceprint": {
      "score": 0.83,
@@ -182,24 +180,24 @@
  ],
  "challenges": [
   {
-   "challenge_id": "ch-real-1",
+   "challenge_id": "chl_d4e9002a7f4a65eb",
    "kind": "phrase",
    "status": "passed",
    "phrase_match": true,
    "speaker_score": 0.83,
    "reason": null,
-   "issued_at": "2026-11-08T18:10:20.000000Z",
-   "resolved_at": "2026-11-08T18:10:31.000000Z"
+   "issued_at": "2026-11-08T05:36:09.830579+00:00",
+   "resolved_at": "2026-11-08T05:36:10.538479+00:00"
   },
   {
-   "challenge_id": "ch-real-2",
+   "challenge_id": "chl_bb0832c88b624c1a",
    "kind": "phrase",
    "status": "passed",
    "phrase_match": true,
    "speaker_score": 0.83,
    "reason": null,
-   "issued_at": "2026-11-08T18:11:02.000000Z",
-   "resolved_at": "2026-11-08T18:11:12.000000Z"
+   "issued_at": "2026-11-08T05:36:12.685105+00:00",
+   "resolved_at": "2026-11-08T05:36:13.390658+00:00"
   }
  ],
  "otp": {
@@ -212,21 +210,8 @@
   {
    "kind": "callback",
    "result": "confirmed",
-   "at": "2026-11-08T18:10:52.000000Z"
+   "at": "2026-11-08T05:36:12.008208+00:00"
   }
  ],
- "events": [
-  {
-   "type": "agent_speech_start",
-   "at": "2026-11-08T18:10:03.000000Z"
-  },
-  {
-   "type": "user_speech_start",
-   "at": "2026-11-08T18:10:09.000000Z"
-  },
-  {
-   "type": "agent_speech_end",
-   "at": "2026-11-08T18:10:12.000000Z"
-  }
- ]
+ "events": []
 }
