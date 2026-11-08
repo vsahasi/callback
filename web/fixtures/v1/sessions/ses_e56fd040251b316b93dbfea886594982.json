@@ -1,0 +1,23 @@
+{
+ "session_id": "ses_e56fd040251b316b93dbfea886594982",
+ "created_at": "2026-11-08T05:36:52.389379+00:00",
+ "updated_at": "2026-11-08T05:36:52.641880+00:00",
+ "scenario": "real_cfo",
+ "claimed_user_id": "u_eric",
+ "channel": "phone",
+ "last_decision": null,
+ "last_action": null,
+ "last_reasons": [],
+ "locked": false,
+ "ended": true,
+ "decisions": [],
+ "challenges": [],
+ "otp": {
+  "sent": false,
+  "sent_to_last_four": null,
+  "attempts": 0,
+  "verified": null
+ },
+ "factors": [],
+ "events": []
+}
