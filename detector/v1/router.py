@@ -29,6 +29,9 @@ from callback_shared.contract import (
     ChallengeCreate,
     ChallengeIssued,
     ChallengeStatus,
+    EnrollmentResult,
+    EnrollmentStart,
+    EnrollmentStarted,
     FactorReport,
     OtpCheck,
     OtpCheckResult,
@@ -228,6 +231,27 @@ def build_v1_router(
     async def end_session(session_id: str) -> Response:
         await service.jitter()
         service.end_session(session_id)
+        return _no_content()
+
+    # ------------------------------------------------ 14-16: enrollments
+
+    @router.post("/enrollments", response_model=EnrollmentStarted)
+    async def start_enrollment(body: EnrollmentStart) -> EnrollmentStarted:
+        await service.jitter()
+        return service.start_enrollment(body)
+
+    @router.post(
+        "/enrollments/{enrollment_id}/complete", response_model=EnrollmentResult
+    )
+    async def complete_enrollment(enrollment_id: str) -> EnrollmentResult:
+        await service.jitter()
+        return service.complete_enrollment(enrollment_id)
+
+    @router.delete("/enrollments/{user_id}", status_code=204)
+    async def delete_enrollment(user_id: str) -> Response:
+        # Operator use; the agent never calls it. Idempotent.
+        await service.jitter()
+        service.delete_enrollment(user_id)
         return _no_content()
 
     router.service = service  # type: ignore[attr-defined]

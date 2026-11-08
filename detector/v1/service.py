@@ -24,6 +24,10 @@ from callback_shared.contract import (
     ChallengeIssued,
     ChallengeKind,
     ChallengeStatus,
+    Channel,
+    EnrollmentResult,
+    EnrollmentStart,
+    EnrollmentStarted,
     FactorReport,
     OtpCheckResult,
     OtpSent,
@@ -51,16 +55,26 @@ from detector.v1.challenges import (
     make_say,
     new_challenge_id,
 )
+from detector.v1.enrollments import (
+    ConsentLog,
+    EnrollmentRecord,
+    new_enrollment_id,
+    print_identity,
+)
 from detector.v1.errors import (
     ChallengeNotFound,
+    ClaimMismatch,
+    EnrollmentNotFound,
     IdempotencyConflict,
     InvalidScenario,
     NoOpenEnrollment,
     OtpNotSent,
+    OtpNotVerified,
     OtpRateLimited,
     OtpUnavailable,
     SessionEnded,
     SessionLocked,
+    SessionNotFound,
     SmsFailed,
     UserNotFound,
     V1Error,
@@ -140,6 +154,8 @@ class V1Service:
             else UserDirectory.from_settings(settings)
         )
         self.registry = SessionRegistry(self.clock)
+        self.consents = ConsentLog()
+        self.enrollments: dict[str, EnrollmentRecord] = {}
         self.otp: OtpBackend = (
             otp if otp is not None else otp_backend_from_settings(settings)
         )
@@ -290,7 +306,9 @@ class V1Service:
     def _enroll_prompt(self, session: V1Session, now: float) -> int:
         """The prompt number the next enroll challenge asks."""
 
-        raise NoOpenEnrollment()
+        if session.enrollment is None:
+            raise NoOpenEnrollment()
+        return session.enrollment.next_prompt(now)
 
     def create_challenge(self, session_id: str, kind: ChallengeKind) -> ChallengeIssued:
         session = self.registry.get(session_id)
@@ -555,6 +573,93 @@ class V1Service:
             ttl_s=decision.ttl_s,
             locked=session.locked_code,
         )
+
+    # ----------------------------------------------------------- enrollment
+
+    def start_enrollment(self, req: EnrollmentStart) -> EnrollmentStarted:
+        session = self.registry.get(req.session_id)
+        if session.locked_code is not None:
+            raise SessionLocked()
+        if req.user_id != session.claimed_user_id or req.channel != session.channel:
+            raise ClaimMismatch()
+        # V4: anyone could enroll their own voice as the claimed user without it.
+        if not session.otp.verified:
+            raise OtpNotVerified()
+        consent = self.consents.append_consent(
+            user_id=req.user_id,
+            channel=req.channel,
+            version=req.consent.version,
+            verbatim=req.consent.verbatim,
+            ts_ms=req.consent.ts_ms,
+        )
+        if session.enrollment is not None:
+            # A new start replaces the open enrollment on this session.
+            self.enrollments.pop(session.enrollment.enrollment_id, None)
+        record = EnrollmentRecord(
+            enrollment_id=new_enrollment_id(),
+            session_id=session.session_id,
+            user_id=req.user_id,
+            channel=req.channel,
+            consent_id=consent.consent_id,
+            started_at=self.registry.now(),
+        )
+        session.enrollment = record
+        self.enrollments[record.enrollment_id] = record
+        # Never the verbatim answer.
+        self.log(
+            "v1_enrollment_started",
+            session_id=session.session_id,
+            enrollment_id=record.enrollment_id,
+            channel=req.channel.value,
+            consent_id=consent.consent_id,
+            consent_version=req.consent.version[:32],
+        )
+        return EnrollmentStarted(
+            enrollment_id=record.enrollment_id,
+            prompts_required=record.prompts_required,
+        )
+
+    def complete_enrollment(self, enrollment_id: str) -> EnrollmentResult:
+        record = self.enrollments.get(enrollment_id)
+        if record is None:
+            raise EnrollmentNotFound()
+        try:
+            session = self.registry.lookup(record.session_id)
+        except SessionNotFound:
+            self.enrollments.pop(enrollment_id, None)
+            raise EnrollmentNotFound() from None
+        if record.result is not None:
+            return record.result  # completing twice gives the same answer
+        if session.ended:
+            raise SessionEnded()
+        if session.locked_code is not None:
+            # A denied caller's voice is never enrolled.
+            raise SessionLocked()
+        session.last_call_at = self.registry.now()
+        result = record.finish(self.registry.now())
+        if session.enrollment is record:
+            session.enrollment = None
+        # Mock mode writes no print. Real mode would write PR 3's print under
+        # print_identity(user_id, channel) from listener clips: stretch work,
+        # and with no audio in Round 2 no prompt can pass anyway.
+        self.log(
+            "v1_enrollment_completed",
+            session_id=session.session_id,
+            enrollment_id=record.enrollment_id,
+            status=result.status,
+            prompts_passed=result.prompts_passed,
+        )
+        return result
+
+    def delete_enrollment(self, user_id: str) -> None:
+        erased = 0
+        for channel in Channel:
+            if self.voiceprints.delete(print_identity(user_id, channel)):
+                erased += 1
+        self.consents.append_revoke(
+            user_id=user_id, ts_ms=round(self.registry.now() * 1000)
+        )
+        self.log("v1_enrollment_erased", user_id=user_id[:64], prints_erased=erased)
 
     # ----------------------------------------------------------------- end
 
