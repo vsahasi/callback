@@ -13,6 +13,7 @@ room or a raw caller identity.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Callable
 from typing import Any
@@ -533,11 +534,35 @@ class V1Service:
                     raise SessionEnded()
                 now = self.registry.now()
                 verdict = evaluate(self.view(session, now), req, now)
+                self._apply(session, req.idempotency_key, fingerprint, verdict)
+                return verdict.decision
         except V1Error:
             raise
         # Any failure at all denies (fail closed): TimeoutError past the
-        # deadline, and any bug in the policy.
+        # deadline, a bug in the policy, or a bug while recording the answer.
         except Exception as exc:  # noqa: BLE001
+            return self._fail_closed(session, req, fingerprint, exc)
+
+    def _fail_closed(
+        self,
+        session: V1Session,
+        req: AuthorizeRequest,
+        fingerprint: str,
+        exc: Exception,
+    ) -> WireDecision:
+        """The section 2.10 deny: 200, reasons ["internal_timeout"], locked."""
+
+        verdict = internal_timeout_verdict(session.session_id, req.action)
+        # The lock first, so it holds even if the bookkeeping below fails.
+        if session.locked_code is None:
+            session.locked_code = verdict.lock_code
+        # An answer half recorded before the failure never went out.
+        if (
+            session.history
+            and session.history[-1].idempotency_key == req.idempotency_key
+        ):
+            session.history.pop()
+        with contextlib.suppress(Exception):
             self.log(
                 "v1_authorize_failed",
                 level="error",
@@ -545,8 +570,8 @@ class V1Service:
                 action=req.action.value,
                 exception=type(exc).__name__,
             )
-            verdict = internal_timeout_verdict(session.session_id, req.action)
-        self._apply(session, req.idempotency_key, fingerprint, verdict)
+        with contextlib.suppress(Exception):
+            self._apply(session, req.idempotency_key, fingerprint, verdict)
         return verdict.decision
 
     def _answer_hold(
@@ -570,7 +595,9 @@ class V1Service:
                 exception=type(exc).__name__,
             )
             verdict = tier0_verdict(session.session_id, req.action)
-        self._apply(session, req.idempotency_key, fingerprint, verdict)
+        # Recording it can fail too; the hold is allowed regardless.
+        with contextlib.suppress(Exception):
+            self._apply(session, req.idempotency_key, fingerprint, verdict)
         return verdict.decision
 
     def _apply(

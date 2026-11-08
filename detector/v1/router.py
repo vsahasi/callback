@@ -85,7 +85,8 @@ def build_v1_router(
         An exception that is not a contract error becomes `internal_error`
         here, inside the route, so the app's DetectorError handler renders it
         as an `ErrorResponse` like every other /v1 failure. The authorize
-        route never gets this far: it turns its own failures into a deny.
+        route never gets this far: it turns its own failures, including one
+        while recording the answer, into the 200 internal_timeout deny.
         """
 
         def get_route_handler(

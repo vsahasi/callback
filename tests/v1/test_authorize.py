@@ -250,3 +250,59 @@ async def test_a_hold_with_a_policy_bug_is_still_allowed_and_never_locks(
     assert response.json()["decision"] == "allow"
     assert response.json()["reasons"] == ["tier0_hold"]
     assert v1_app.state.v1.registry.get(session_id).locked_code is None
+
+
+# ------------------------------------- M2: _apply failures deny, not 500
+
+
+async def test_a_failure_while_recording_the_decision_denies(
+    v1: httpx.AsyncClient, v1_app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = v1_app.state.v1
+
+    def broken_apply(*_: Any, **__: Any) -> None:
+        raise RuntimeError("bookkeeping bug")
+
+    monkeypatch.setattr(service, "_apply", broken_apply)
+    session_id = await create_session(v1)
+    response = await authorize(v1, session_id, bank_change("k1"))
+    assert response.status_code == 200
+    assert response.json()["decision"] == "deny"
+    assert response.json()["reasons"] == ["internal_timeout"]
+    assert response.json()["session_id"] == session_id
+    assert service.registry.get(session_id).locked_code == "internal_timeout"
+
+
+async def test_a_failure_in_the_decision_log_denies(
+    v1: httpx.AsyncClient, v1_app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = v1_app.state.v1
+    real_log = service.log
+
+    def log(event: str, **fields: Any) -> None:
+        if event == "v1_decision" and fields.get("decision") == "step_up":
+            raise RuntimeError("log sink down")
+        real_log(event, **fields)
+
+    monkeypatch.setattr(service, "log", log)
+    session_id = await create_session(v1)
+    response = await authorize(v1, session_id, bank_change("k1"))
+    assert response.status_code == 200
+    assert response.json()["reasons"] == ["internal_timeout"]
+    assert service.registry.get(session_id).locked_code == "internal_timeout"
+
+
+async def test_a_hold_whose_recording_fails_is_still_allowed(
+    v1: httpx.AsyncClient, v1_app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = v1_app.state.v1
+
+    def broken_apply(*_: Any, **__: Any) -> None:
+        raise RuntimeError("bookkeeping bug")
+
+    monkeypatch.setattr(service, "_apply", broken_apply)
+    session_id = await create_session(v1)
+    response = await authorize(v1, session_id, {**HOLD, "idempotency_key": "h1"})
+    assert response.status_code == 200
+    assert response.json()["decision"] == "allow"
+    assert service.registry.get(session_id).locked_code is None
