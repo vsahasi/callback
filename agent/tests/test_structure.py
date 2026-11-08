@@ -386,6 +386,16 @@ def test_the_worker_gets_the_gate_the_toolbox_and_the_room_options_from_the_shar
     assert called & (by_hand | {"NoStepUps"}) == set()
 
 
+def test_the_worker_logs_the_demo_scenario_when_it_starts():
+    # A worker restarted without DETECTOR_SCENARIO plays real_cfo on every call, so the active
+    # scenario has to show in the log. It is hooked to the server's worker_started event.
+    source = (SOURCE / "worker.py").read_text()
+    assert "log_demo_scenario" in called_names(source) | {
+        n.id for n in ast.walk(ast.parse(source)) if isinstance(n, ast.Name)
+    }
+    assert '"worker_started"' in source
+
+
 def worker_session_start() -> dict[str, ast.expr]:
     """The keyword arguments of the one `session.start(...)` call in worker.py, by name."""
     starts = [

@@ -42,6 +42,7 @@ from callback_agent.session_wiring import (
     build_forwarding,
     call_state_for,
     finish_call,
+    log_demo_scenario,
     turn_logging_enabled,
     wire_turn_forwarding,
 )
@@ -918,3 +919,26 @@ def test_an_agent_turn_is_never_exempt(wired):
     spoken = said("four two four two four two", role="assistant", created_at=1000.25)
     wired.session.fire("conversation_item_added", item_added(spoken, created_at=1002.5))
     assert wired.sent[0].text == "[NUM]"
+
+
+# --- which demo scenario the worker is set to play ---
+
+
+def test_a_set_scenario_is_logged_by_name_only(caplog):
+    with caplog.at_level(logging.INFO, logger="callback_agent.session_wiring"):
+        log_demo_scenario(
+            settings(
+                detector_scenario=Scenario.CLONED_VOICE,
+                detector_url="https://detector.test",
+                detector_token="secret-token",
+            )
+        )
+    [record] = caplog.records
+    assert "cloned_voice" in record.getMessage()
+    assert "secret-token" not in caplog.text and "detector.test" not in caplog.text
+
+
+def test_no_scenario_logs_nothing(caplog):
+    with caplog.at_level(logging.DEBUG, logger="callback_agent.session_wiring"):
+        log_demo_scenario(settings())
+    assert caplog.records == []

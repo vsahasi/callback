@@ -28,6 +28,7 @@ from callback_agent.session_wiring import (
     build_tools,
     call_state_for,
     finish_call,
+    log_demo_scenario,
     turn_logging_enabled,
     wire_hangups,
     wire_risk_updates,
@@ -39,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 settings = Settings.from_env(os.environ)
 server = AgentServer()
+server.on("worker_started", lambda: log_demo_scenario(settings))
 
 
 def prewarm(proc: JobProcess) -> None:

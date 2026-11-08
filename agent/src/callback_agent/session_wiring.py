@@ -115,6 +115,17 @@ def build_forwarding(settings: Settings) -> Forwarding | None:
     return Forwarding(detector, Forwarder(detector))
 
 
+def log_demo_scenario(settings: Settings) -> None:
+    """Log the scripted call the detector will play, when one is set.
+
+    Without the scenario header a mock detector plays real_cfo, so a worker restarted without
+    DETECTOR_SCENARIO would allow the clone, the replay and the impostor. The log names the
+    scenario and nothing else, so the person at the demo can see which one is active.
+    """
+    if settings.detector_scenario is not None:
+        logger.info("demo scenario for the detector: %s", settings.detector_scenario.value)
+
+
 def build_ramp(settings: Settings) -> RampClient:
     """The Ramp client of a call. The worker requires both credentials, so a gap is a bug."""
     if not (settings.ramp_client_id and settings.ramp_client_secret):
