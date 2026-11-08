@@ -29,7 +29,7 @@ import secrets
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated, TextIO
+from typing import Annotated, Any, TextIO
 
 from callback_shared.contract import (
     CONTRACT_VERSION as WIRE_CONTRACT_VERSION,
@@ -76,25 +76,66 @@ from shared.contract import (
 )
 
 
+def bearer_matches(authorization: str | None, expected: str) -> bool:
+    """Whether an Authorization header carries the bearer token."""
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return False
+    presented = authorization.split(" ", 1)[1].strip()
+    # Compare bytes, not str: secrets.compare_digest raises TypeError on
+    # non-ASCII str, and Starlette decodes headers as latin-1, so one
+    # non-ASCII byte in the header turned a 401 into an unhandled 500.
+    return secrets.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+
+
 def make_require_token(settings: Settings) -> Callable[..., None]:
     """The bearer check, as a FastAPI dependency. /events and /v1 share it."""
 
     def require_token(
         authorization: Annotated[str | None, Header()] = None,
     ) -> None:
-        expected = settings.api_token
         if not authorization or not authorization.lower().startswith("bearer "):
             raise Unauthorized("missing bearer token")
-        presented = authorization.split(" ", 1)[1].strip()
-        # Compare bytes, not str: secrets.compare_digest raises TypeError on
-        # non-ASCII str, and Starlette decodes headers as latin-1, so one
-        # non-ASCII byte in the header turned a 401 into an unhandled 500.
-        if not secrets.compare_digest(
-            presented.encode("utf-8"), expected.encode("utf-8")
-        ):
+        if not bearer_matches(authorization, settings.api_token):
             raise Unauthorized("invalid bearer token")
 
     return require_token
+
+
+class V1AuthGate:
+    """Auth first for every /v1 request (ruling section 2.3).
+
+    FastAPI routes a request and decodes its body before it runs a router's
+    dependencies, so without this an unauthenticated caller got a 422 for a
+    malformed body, a 404 for an unknown path or a 405 for a wrong method,
+    which maps the routes and gives validation feedback. Pure ASGI, so the
+    body is never read: a missing or wrong token is a 401 before any of that.
+    The router keeps its own bearer dependency as a second line.
+    """
+
+    def __init__(self, app: Any, *, token: str) -> None:
+        self.app = app
+        self.token = token
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope.get("type") == "http":
+            path = scope.get("path", "")
+            if path == "/v1" or path.startswith("/v1/"):
+                authorization = next(
+                    (
+                        value.decode("latin-1")
+                        for name, value in scope.get("headers") or ()
+                        if name.lower() == b"authorization"
+                    ),
+                    None,
+                )
+                if not bearer_matches(authorization, self.token):
+                    response = _wire_error(
+                        401, "unauthorized", "missing or invalid bearer token", None
+                    )
+                    await response(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
 
 
 def _is_v1(request: Request) -> bool:
@@ -220,6 +261,9 @@ def create_app(
     v1: V1Service = v1_router.service  # type: ignore[attr-defined]
     app.include_router(v1_router)
     app.state.v1 = v1
+    # Auth before routing and body parsing for /v1. Added before the review
+    # mount, so the observability middleware still wraps and logs each 401.
+    app.add_middleware(V1AuthGate, token=resolved.api_token)
 
     if resolved.api_token_generated:
         # Loud on purpose: the service is up but can authenticate nobody.
