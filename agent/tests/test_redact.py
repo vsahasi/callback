@@ -42,10 +42,26 @@ def _both(text: str, exempt: bool = False) -> Turn:
         ("I have 3 bills", "I have [NUM] bills"),
         ("call at 555 then 1 2 3 later", "call at [NUM] then [NUM] later"),
         ("it is 4 2 4 and 2 4 2", "it is [NUM] and [NUM]"),
+        # Teens, tens, hundred and thousand are digit words too, and two words are a number.
+        ("forty two", "[NUM]"),
+        ("forty-two", "[NUM]"),
+        ("twenty-one", "[NUM]"),
+        ("one hundred twenty", "[NUM]"),
+        ("thirteen fourteen", "[NUM]"),
+        ("two thousand", "[NUM]"),
+        (
+            "forty two and sixty seven and eighty nine",
+            "[NUM] and [NUM] and [NUM]",
+        ),
+        ("I have ten bills and forty one are late", "I have ten bills and [NUM] are late"),
         # A single spoken digit word stays, so ordinary speech survives.
         ("I have one bill", "I have one bill"),
         ("oh okay I have one bill", "oh okay I have one bill"),
         ("forty bills", "forty bills"),
+        ("we paid forty vendors", "we paid forty vendors"),
+        ("about a hundred of them", "about a hundred of them"),
+        ("it was thirteen", "it was thirteen"),
+        ("one, two, buckle my shoe", "[NUM], buckle my shoe"),
         ("one of them is late", "one of them is late"),
         # Punctuation on a number does not let it through.
         ("my account is 000123456789?", "my account is [NUM]?"),
@@ -113,6 +129,22 @@ def test_three_separate_turns_are_each_redacted() -> None:
     for chunk in ("zero two one", "zero zero zero", "zero two one"):
         assert _both(chunk).text == "[NUM]"
         assert [w.w for w in _both(chunk).words] == ["[NUM]"]
+
+
+def test_tens_and_teens_are_redacted_in_the_words_too() -> None:
+    text = "forty two and sixty seven and I have forty bills"
+    out = _both(text)
+    assert [w.w for w in out.words] == [
+        "[NUM]",
+        "and",
+        "[NUM]",
+        "and",
+        "I",
+        "have",
+        "forty",
+        "bills",
+    ]
+    assert out.text == "[NUM] and [NUM] and I have forty bills"
 
 
 def test_single_digit_word_survives_in_the_words() -> None:

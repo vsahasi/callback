@@ -42,6 +42,27 @@ _TENS = {
     "ninety": "9",
 }
 _REPEATS = {"double": 2, "triple": 3}
+# Number words that parse_spoken_digits does not read but digit_tokens counts, so a number said as
+# "forty two", "thirteen" or "one hundred twenty" is seen as one. Each maps to the digits it adds.
+_BIG = {
+    **dict.fromkeys(
+        (
+            "ten",
+            "eleven",
+            "twelve",
+            "thirteen",
+            "fourteen",
+            "fifteen",
+            "sixteen",
+            "seventeen",
+            "eighteen",
+            "nineteen",
+        ),
+        2,
+    ),
+    "hundred": 3,
+    "thousand": 4,
+}
 
 # The word lists behind parse_yes_no. A yes uses only _CORE_WORDS and _FILLERS, and has a core word
 # or one of _CORE_PHRASES. A word in _NEGATIONS, or any word ending in "n't", makes a no.
@@ -303,6 +324,7 @@ def digit_tokens(words: list[str]) -> list[DigitToken]:
 
     - A numeral counts its length, a digit word and "zero" count 1.
     - "Oh" and "o" count 1, only where oh_positions says they are a zero.
+    - The teens ("ten" to "nineteen") count 2, "hundred" 3 and "thousand" 4.
     - A tens word counts 2, with or without the unit word right after it ("forty two" is one
       token of 2 digits).
     - "Double" and "triple" take the digit token right after them, and count 2 or 3 for it.
@@ -317,6 +339,8 @@ def digit_tokens(words: list[str]) -> list[DigitToken]:
             return DigitToken(i, i + 1, len(word))
         if word in _DIGIT_WORDS or i in ohs:
             return DigitToken(i, i + 1, 1)
+        if word in _BIG:
+            return DigitToken(i, i + 1, _BIG[word])
         if word in _TENS:
             if i + 1 < len(words) and words[i + 1] in _UNITS:
                 return DigitToken(i, i + 2, 2)
