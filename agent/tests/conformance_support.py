@@ -227,11 +227,12 @@ def deny_codes(r: Rig) -> list[tuple[str, str | None]]:
     return [(kind, code) for kind, _, code in r.client.rounds]
 
 
-def assert_held_and_hung_up(r: Rig, result: GateResult) -> None:
+def assert_held_and_hung_up(r: Rig, result: GateResult, *, read: bool = False) -> None:
     """The deny path ran: v1 is held, the line says so, the call is over and locked."""
-    assert result == GateResult("denied", prompts.DENY_HELD), result
+    line = prompts.DENY_READ_HELD if read else prompts.DENY_HELD
+    assert result == GateResult("denied", line), result
     assert ("hold_vendor", "v1") in r.ramp.calls
-    assert r.capture.lines[-1] == prompts.DENY_HELD
+    assert r.capture.lines[-1] == line
     assert r.call.ended and r.state.locked
 
 
@@ -301,7 +302,7 @@ async def case_cloned_voice(url: str, token: str, *, age_wait_s: float = CLONE_R
     async with rig(url, token, Scenario.CLONED_VOICE, channel=Channel.BROWSER, **kw) as r:
         await asyncio.sleep(age_wait_s)
         result = await r.run(ACCOUNTS)
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         assert deny_codes(r) == [("deny", "synthetic_speech")]
 
 
@@ -318,7 +319,7 @@ async def case_replay(url: str, token: str, **kw) -> None:
 
     async with rig(url, token, Scenario.REPLAY, channel=Channel.BROWSER, **kw) as r:
         result = await r.run(ACCOUNTS)
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         assert r.client.rounds[0][:2] == ("step_up", ["voice_challenge"])
         assert len(r.client.rounds) == 2
         assert r.client.rounds[1][::2] == ("deny", "challenge_failed_replay")
@@ -347,7 +348,7 @@ async def case_human_impostor(url: str, token: str, **kw) -> None:
 
     async with rig(url, token, Scenario.HUMAN_IMPOSTOR, channel=Channel.BROWSER, **kw) as r:
         result = await r.run(ACCOUNTS)
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         assert r.client.rounds[0][:2] == ("step_up", ["voice_challenge"])
         assert r.client.rounds[-1][::2] == ("deny", "speaker_mismatch")
 
@@ -379,7 +380,7 @@ async def case_wrong_token(url: str, token: str, **kw) -> None:
             result = await gate.run(ACCOUNTS)
         finally:
             await bad.aclose()
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         [decision] = bad.decisions
         assert decision.reasons[0].startswith("detector_unavailable"), decision.reasons
         assert "HTTP 401" in decision.reasons[0]

@@ -110,6 +110,11 @@ DENY_HELD = (
     "I can't make that change on this call, but I've placed a hold to keep things safe. "
     "We'll follow up through the usual channel."
 )
+# A denied read (tier 1) that names a vendor. The vendor is held, but the request was not a change.
+DENY_READ_HELD = (
+    "I can't help with that on this call. I've put that vendor's payments on hold while the team "
+    "checks. We'll follow up through the usual channel."
+)
 DENY_NOT_HELD = "I can't help with that on this call. We'll follow up through the usual channel."
 
 # What a gated tool returns to the LLM, which tells the caller in its own words.

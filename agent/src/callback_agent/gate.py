@@ -245,7 +245,10 @@ class Gate:
                 held = await hold_vendor_fully(self._ramp, target.id, DENY_HOLD_REASON)
             except Exception:
                 logger.exception("the hold for a denied %s raised, so nothing is held", req.action)
-        line = prompts.DENY_HELD if held else prompts.DENY_NOT_HELD
+        # Only a hold that was confirmed is claimed. A read gets its own wording: nothing was
+        # changed, so "that change" would be wrong. Without a hold, DENY_NOT_HELD fits both.
+        held_line = prompts.DENY_READ_HELD if req.tier == 1 else prompts.DENY_HELD
+        line = held_line if held else prompts.DENY_NOT_HELD
         if self._state.closing:  # checked here, as the caller may have left while the hold ran
             logger.info("%s denied after the caller left, so the deny line is not said", req.action)
         else:
