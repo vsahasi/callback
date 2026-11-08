@@ -37,6 +37,7 @@ from livekit.agents.llm import AgentHandoff, ChatMessage
 import callback_agent.session_wiring as wiring
 from callback_agent.config import Settings
 from callback_agent.detector import DetectorClient, DetectorError
+from callback_agent.redact import redact_turn
 from callback_agent.session_wiring import (
     build_forwarding,
     call_state_for,
@@ -153,6 +154,11 @@ def agent_speaks(session, start: float, end: float | None = None) -> None:
         session.fire("agent_state_changed", agent_changed("speaking", "listening", at=end))
 
 
+def redacted(turn: Turn) -> Turn:
+    """What the wiring forwards for `turn`: the same turn with its numbers redacted."""
+    return redact_turn(turn, exempt_short_runs=False)
+
+
 def message_arrives(wired, *segments: FinalSegment) -> Turn:
     """The caller's message arrives with these segments pending. Returns the user turn forwarded."""
     wired.state.pending_segments.extend(segments)
@@ -176,17 +182,18 @@ def wired():
 def test_a_user_message_forwards_the_pending_segments_as_one_user_turn(wired):
     wired.state.pending_segments.extend([FOUR_TWO])
     wired.session.fire("conversation_item_added", item_added(said("four two")))
-    assert wired.sent == [build_user_turn([FOUR_TWO], interrupted=False)]
-    assert wired.sent[0].start_ms == 1000400 and wired.sent[0].words[0] == Word(
-        w="four", start_ms=1000420, end_ms=1000560
-    )
+    assert wired.sent == [redacted(build_user_turn([FOUR_TWO], interrupted=False))]
+    # "four two" is a number, so it is forwarded as one [NUM] word with the times of both.
+    assert wired.sent[0].start_ms == 1000400 and wired.sent[0].words == [
+        Word(w="[NUM]", start_ms=1000420, end_ms=1000880)
+    ]
     assert wired.state.pending_segments == []
 
 
 def test_the_segments_of_one_message_are_merged(wired):
     wired.state.pending_segments.extend([FOUR_TWO, SEVEN])
     wired.session.fire("conversation_item_added", item_added(said("four two seven")))
-    assert wired.sent == [build_user_turn([FOUR_TWO, SEVEN], interrupted=False)]
+    assert wired.sent == [redacted(build_user_turn([FOUR_TWO, SEVEN], interrupted=False))]
     assert wired.state.pending_segments == []
 
 
@@ -211,7 +218,7 @@ def test_a_segment_nobody_answered_is_not_merged_into_the_next_turn(wired, caplo
     wired.state.pending_segments.extend([OKAY, FOUR_TWO])
     with caplog.at_level(logging.WARNING, logger="callback_agent.session_wiring"):
         wired.session.fire("conversation_item_added", item_added(said("four two")))
-    assert wired.sent == [build_user_turn([FOUR_TWO], interrupted=False)]
+    assert wired.sent == [redacted(build_user_turn([FOUR_TWO], interrupted=False))]
     assert wired.state.pending_segments == []
     assert "okay" not in caplog.text and any(r.levelno == logging.WARNING for r in caplog.records)
 
@@ -219,7 +226,7 @@ def test_a_segment_nobody_answered_is_not_merged_into_the_next_turn(wired, caplo
 def test_segments_that_come_after_the_message_wait_for_their_own(wired):
     wired.state.pending_segments.extend([FOUR_TWO, SEVEN])
     wired.session.fire("conversation_item_added", item_added(said("four two")))
-    assert wired.sent == [build_user_turn([FOUR_TWO], interrupted=False)]
+    assert wired.sent == [redacted(build_user_turn([FOUR_TWO], interrupted=False))]
     assert wired.state.pending_segments == [SEVEN]
 
 
@@ -227,14 +234,14 @@ def test_a_message_the_segments_do_not_match_takes_them_all(wired):
     # Something rewrote the message after the FINALs: the words are still the best record of it.
     wired.state.pending_segments.extend([FOUR_TWO, SEVEN])
     wired.session.fire("conversation_item_added", item_added(said("four two [removed]")))
-    assert wired.sent == [build_user_turn([FOUR_TWO, SEVEN], interrupted=False)]
+    assert wired.sent == [redacted(build_user_turn([FOUR_TWO, SEVEN], interrupted=False))]
     assert wired.state.pending_segments == []
 
 
 def test_whitespace_in_the_message_does_not_hide_a_match(wired):
     wired.state.pending_segments.extend([OKAY, FOUR_TWO])
     wired.session.fire("conversation_item_added", item_added(said("  four   two ")))
-    assert wired.sent == [build_user_turn([FOUR_TWO], interrupted=False)]
+    assert wired.sent == [redacted(build_user_turn([FOUR_TWO], interrupted=False))]
 
 
 def test_the_same_words_twice_still_pick_the_latest(wired):
@@ -561,7 +568,7 @@ def test_a_handler_error_does_not_stop_the_next_turn():
     session.fire("conversation_item_added", item_added(said("bad")))
     state.pending_segments.append(FOUR_TWO)
     session.fire("conversation_item_added", item_added(said("four two")))
-    assert forwarder.sent == [build_user_turn([FOUR_TWO], interrupted=False)]
+    assert forwarder.sent == [redacted(build_user_turn([FOUR_TWO], interrupted=False))]
 
 
 async def test_the_real_session_delivers_every_event_to_the_handlers():

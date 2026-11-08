@@ -840,12 +840,9 @@ async def test_a_spoken_turn_runs_from_the_stt_event_to_epoch_ms(clock, stt_scri
     assert sent == [
         Turn(
             role=Role.USER,
-            text="four two",
+            text="[NUM]",  # "four two" is a number, so the wiring redacts it
             start_ms=1000400,
             end_ms=1000900,
-            words=[
-                Word(w="four", start_ms=1000420, end_ms=1000560),
-                Word(w="two", start_ms=1000600, end_ms=1000880),
-            ],
+            words=[Word(w="[NUM]", start_ms=1000420, end_ms=1000880)],
         )
     ]
