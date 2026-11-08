@@ -4,12 +4,10 @@ import { Notice } from "./States";
 
 export function Detail({
   b,
-  stale,
   following,
   onFollow,
 }: {
   b: EvidenceBundle;
-  stale: boolean;
   following: boolean;
   onFollow: () => void;
 }) {
@@ -18,7 +16,6 @@ export function Detail({
   const { allow_below, deny_at_or_above } = b.thresholds;
   return (
     <>
-      {stale && <Notice tone="warn">Refresh failed. Showing the last good reading.</Notice>}
       {!following && (
         <Notice tone="warn">
           This is an older call. <button className="link" onClick={onFollow}>Jump to the newest</button>

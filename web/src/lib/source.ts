@@ -35,9 +35,53 @@ export function assertSafeId(id: string): void {
 
 type Env = Record<string, string | undefined>;
 
+const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+
+/** Copies only the keys in `keys`. Anything else the detector sent is dropped. */
+function pick<T extends object>(src: unknown, keys: readonly string[]): T {
+  const out: Record<string, unknown> = {};
+  if (src && typeof src === "object")
+    for (const k of keys) if (k in src) out[k] = (src as Record<string, unknown>)[k];
+  return out as T;
+}
+
+/**
+ * Allowlist of exactly the evidence fields the page renders. The raw bundle can
+ * carry a transcript, recording links and per-request metadata, so it is never
+ * forwarded whole.
+ */
+export function eventsBundle(raw: EvidenceBundle): EvidenceBundle {
+  const b = pick<EvidenceBundle>(raw, [
+    "generated_at", "session_id", "mock_mode", "headline", "decision", "state", "next_action",
+    "reason", "why", "risk_score", "confidence", "claimed_user_id",
+  ]);
+  b.why = arr<string>(raw.why).filter((x) => typeof x === "string");
+  b.thresholds = pick(raw.thresholds, ["allow_below", "deny_at_or_above"]);
+  b.factors = arr<EvidenceBundle["factors"][number]>(raw.factors).map((f) =>
+    pick(f, ["name", "verdict", "score", "risk", "weight", "risk_share", "detail", "fatal", "fatal_candidate"]),
+  );
+  b.otp = raw.otp
+    ? {
+        ...pick<NonNullable<EvidenceBundle["otp"]>>(raw.otp, [
+          "challenged", "code_length", "attempts_used", "attempts_remaining", "max_attempts", "resolved",
+        ]),
+        attempts: arr<NonNullable<EvidenceBundle["otp"]>["attempts"][number]>(raw.otp.attempts).map((a) =>
+          pick(a, ["attempt", "at", "outcome", "detail"]),
+        ),
+      }
+    : null;
+  b.timeline = arr<EvidenceBundle["timeline"][number]>(raw.timeline).map((t) =>
+    pick(t, [
+      "at", "request_id", "endpoint", "status", "outcome", "latency_ms", "call_event", "sequence",
+      "decision", "state", "risk_score", "next_action", "reason", "error_message",
+    ]),
+  );
+  return b;
+}
+
 function eventsList(l: SessionList): ListView {
   return {
-    sessions: (l.sessions ?? []).map((s) => ({
+    sessions: arr<SessionList["sessions"][number]>(l?.sessions).map((s) => ({
       session_id: s.session_id,
       decision: s.decision,
       who: s.claimed_user_id,
@@ -108,7 +152,7 @@ class EventsHttpSource implements DetectorSource {
     assertSafeId(id);
     const bundle = (await this.d.get(`/review/api/sessions/${encodeURIComponent(id)}`)) as EvidenceBundle;
     if (!bundle || typeof bundle !== "object" || !bundle.session_id) throw unreadable();
-    return { kind: "events", bundle };
+    return { kind: "events", bundle: eventsBundle(bundle) };
   }
 }
 
@@ -134,7 +178,7 @@ class FixtureSource implements DetectorSource {
     } catch {
       throw new SourceError("not_found", "Unknown session.", 404);
     }
-    if (this.flavor === "events") return { kind: "events", bundle: raw as EvidenceBundle };
+    if (this.flavor === "events") return { kind: "events", bundle: eventsBundle(raw as EvidenceBundle) };
     const view = mapV1Detail(raw);
     if (!view) throw unreadable();
     return view;

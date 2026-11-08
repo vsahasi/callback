@@ -5,10 +5,29 @@ import { DetailV1 } from "./DetailV1";
 interface Props {
   view: CallView;
   stale: boolean;
+  asOf: number | null;
   following: boolean;
   onFollow: () => void;
 }
 
-export function CallDetail({ view, ...rest }: Props) {
-  return view.kind === "v1" ? <DetailV1 v={view} {...rest} /> : <Detail b={view.bundle} {...rest} />;
+// While stale, the whole reading is dimmed and marked NOT LIVE, so an old
+// ALLOW cannot pass for the current state of the call.
+export function CallDetail({ view, asOf, ...rest }: Props) {
+  const body =
+    view.kind === "v1" ? <DetailV1 v={view} {...rest} /> : <Detail b={view.bundle} {...rest} />;
+  if (!rest.stale) return body;
+  return (
+    <>
+      <div className="stale-banner" role="alert">
+        <b>NOT LIVE</b>
+        <span>
+          Last reading {asOf ? new Date(asOf).toLocaleTimeString() : "never"}. This decision may no longer be
+          current. Do not rely on it.
+        </span>
+      </div>
+      <div className="is-stale" aria-label="Stale reading">
+        {body}
+      </div>
+    </>
+  );
 }
