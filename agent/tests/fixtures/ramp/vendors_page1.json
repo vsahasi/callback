@@ -1,0 +1,147 @@
+{
+  "data": [
+    {
+      "id": "0b8e1c52-3f4a-4d6e-9c27-5a1d7e30b941",
+      "name": "Acme Supplies Inc",
+      "display_name": "Acme Supplies",
+      "name_legal": "Acme Supplies Incorporated",
+      "description": "Office and warehouse supplies",
+      "is_active": true,
+      "is_deletable": false,
+      "country": "US",
+      "state": "CA",
+      "address": {
+        "address_line_1": "100 Example Way",
+        "address_line_2": "Suite 4",
+        "city": "Oakland",
+        "country": "US",
+        "postal_code": "94607",
+        "state": "CA"
+      },
+      "addresses": [
+        {
+          "id": "467a4145-1123-5816-b42e-9952f21828a8",
+          "is_default": true,
+          "pay_to_name": "Acme Supplies Incorporated",
+          "address_line_1": "100 Example Way",
+          "address_line_2": "Suite 4",
+          "city": "Oakland",
+          "country": "US",
+          "postal_code": "94607",
+          "state": "CA"
+        }
+      ],
+      "tax_address": null,
+      "contacts": [
+        "8c1d3e5f-7092-4a6b-b8d0-2e4f6a8c0b17"
+      ],
+      "default_entity_id": "5e3b7d90-1c2a-4f68-b4d7-8a0e6c9f2d11",
+      "external_vendor_id": null,
+      "accounting_vendor_remote_id": null,
+      "merchant_id": null,
+      "parent_vendor_id": null,
+      "vendor_owner_id": "f2a6c8e0-4b13-4d57-9e81-3c5a7b9d0f24",
+      "vendor_type": "BUSINESS",
+      "federal_tax_classification": null,
+      "billing_frequency": null,
+      "net_payment_terms": 30,
+      "sk_category_id": null,
+      "sk_category_name": null,
+      "total_spend_all_time": {
+        "amount": 4218000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_last_30_days": {
+        "amount": 421800,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_last_365_days": {
+        "amount": 4218000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_ytd": {
+        "amount": 4218000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "created_at": "2026-10-12T17:41:08+00:00",
+      "updated_at": "2026-11-02T18:05:44+00:00"
+    },
+    {
+      "id": "7d2f9a14-6b0c-4e85-a3d1-92c4f8e1b705",
+      "name": "Globex Corporation",
+      "display_name": "Globex",
+      "name_legal": "Globex Corporation",
+      "description": "Industrial equipment rental",
+      "is_active": true,
+      "is_deletable": false,
+      "country": "US",
+      "state": "IL",
+      "address": {
+        "address_line_1": "2 Sample Plaza",
+        "address_line_2": null,
+        "city": "Springfield",
+        "country": "US",
+        "postal_code": "62701",
+        "state": "IL"
+      },
+      "addresses": [
+        {
+          "id": "6d4189dc-e093-54fa-b6da-521b67deaf9e",
+          "is_default": true,
+          "pay_to_name": "Globex Corporation",
+          "address_line_1": "2 Sample Plaza",
+          "address_line_2": null,
+          "city": "Springfield",
+          "country": "US",
+          "postal_code": "62701",
+          "state": "IL"
+        }
+      ],
+      "tax_address": null,
+      "contacts": [
+        "b5d7f901-3a24-4c68-9e0b-4d6f8a1c3e25"
+      ],
+      "default_entity_id": "5e3b7d90-1c2a-4f68-b4d7-8a0e6c9f2d11",
+      "external_vendor_id": null,
+      "accounting_vendor_remote_id": null,
+      "merchant_id": null,
+      "parent_vendor_id": null,
+      "vendor_owner_id": "f2a6c8e0-4b13-4d57-9e81-3c5a7b9d0f24",
+      "vendor_type": "BUSINESS",
+      "federal_tax_classification": null,
+      "billing_frequency": null,
+      "net_payment_terms": 30,
+      "sk_category_id": null,
+      "sk_category_name": null,
+      "total_spend_all_time": {
+        "amount": 975500,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_last_30_days": {
+        "amount": 97550,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_last_365_days": {
+        "amount": 975500,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_ytd": {
+        "amount": 975500,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "created_at": "2026-10-14T09:12:51+00:00",
+      "updated_at": "2026-11-02T18:05:44+00:00"
+    }
+  ],
+  "page": {
+    "next": "https://ramp.test/developer/v1/vendors?page_size=100&start=7d2f9a14-6b0c-4e85-a3d1-92c4f8e1b705"
+  }
+}

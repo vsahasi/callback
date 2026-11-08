@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "id": "1b6f0d83-4a7e-4c25-8d19-e2a5f3c70b64",
+      "account_number_last_four": "4417",
+      "account_nickname": "Operating - Example Bank",
+      "currency": "USD",
+      "is_default": true,
+      "payment_method": "ACH",
+      "proposal_id": null,
+      "status": "active"
+    },
+    {
+      "id": "9c07e2a5-3d18-4f6b-b4a1-7e0d5c8f1a39",
+      "account_number_last_four": null,
+      "account_nickname": "Remit-to address",
+      "currency": "USD",
+      "is_default": false,
+      "payment_method": "CHECK",
+      "proposal_id": null,
+      "status": "active"
+    }
+  ],
+  "page": {
+    "next": null
+  }
+}

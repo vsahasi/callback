@@ -1,0 +1,17 @@
+[project]
+name = "callback-shared"
+version = "1.0.0"
+requires-python = ">=3.11"
+# 2.11 is the oldest pydantic that renders the contract's JSON schema the way the snapshot test
+# expects. 2.9 and 2.10 differ in two places, so do not lower this floor.
+dependencies = ["pydantic>=2.11,<3"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/callback_shared"]

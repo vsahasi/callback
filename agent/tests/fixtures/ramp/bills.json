@@ -1,0 +1,135 @@
+{
+  "data": [
+    {
+      "id": "3a9c5e71-8d04-4b2f-a6e3-0f1d7c84b295",
+      "status": "OPEN",
+      "status_summary": "PAYMENT_SCHEDULED",
+      "approval_status": "APPROVED",
+      "amount": {
+        "amount": 120450,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "due_at": "2026-11-20T00:00:00+00:00",
+      "issued_at": "2026-11-01T00:00:00+00:00",
+      "paid_at": null,
+      "created_at": "2026-11-01T16:20:11+00:00",
+      "archived_at": null,
+      "accounting_date": null,
+      "posting_date": null,
+      "vendor": {
+        "id": "0b8e1c52-3f4a-4d6e-9c27-5a1d7e30b941",
+        "name": "Acme Supplies Inc",
+        "remote_code": null,
+        "remote_id": null,
+        "remote_name": null,
+        "type": "BUSINESS"
+      },
+      "vendor_contact_id": "8c1d3e5f-7092-4a6b-b8d0-2e4f6a8c0b17",
+      "entity_id": "5e3b7d90-1c2a-4f68-b4d7-8a0e6c9f2d11",
+      "bill_owner": {
+        "id": "f2a6c8e0-4b13-4d57-9e81-3c5a7b9d0f24",
+        "first_name": "Jordan",
+        "last_name": "Sample"
+      },
+      "invoice_number": "INV-1001",
+      "memo": "Fall restock",
+      "vendor_memo": null,
+      "remote_id": null,
+      "invoice_urls": [],
+      "attachments": [],
+      "payment": {
+        "amount": {
+          "amount": 120450,
+          "currency_code": "USD",
+          "minor_unit_conversion_rate": 100
+        },
+        "payment_method": "ACH",
+        "payment_date": "2026-11-18",
+        "effective_date": null,
+        "id": null,
+        "customer_friendly_payment_id": null,
+        "details": {}
+      },
+      "line_items": [
+        {
+          "id": "fb810e54-0479-5e1e-9581-78640c08601b",
+          "amount": {
+            "amount": 120450,
+            "currency_code": "USD",
+            "minor_unit_conversion_rate": 100
+          },
+          "memo": "Fall restock",
+          "accounting_field_selections": []
+        }
+      ]
+    },
+    {
+      "id": "e8d14b60-27af-4c93-9b5e-6a3f0c7d1e82",
+      "status": "OPEN",
+      "status_summary": "AWAITING_PAYMENT",
+      "approval_status": "APPROVED",
+      "amount": {
+        "amount": 398000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "due_at": "2026-12-05T00:00:00+00:00",
+      "issued_at": "2026-11-01T00:00:00+00:00",
+      "paid_at": null,
+      "created_at": "2026-11-03T10:02:37+00:00",
+      "archived_at": null,
+      "accounting_date": null,
+      "posting_date": null,
+      "vendor": {
+        "id": "0b8e1c52-3f4a-4d6e-9c27-5a1d7e30b941",
+        "name": "Acme Supplies Inc",
+        "remote_code": null,
+        "remote_id": null,
+        "remote_name": null,
+        "type": "BUSINESS"
+      },
+      "vendor_contact_id": "8c1d3e5f-7092-4a6b-b8d0-2e4f6a8c0b17",
+      "entity_id": "5e3b7d90-1c2a-4f68-b4d7-8a0e6c9f2d11",
+      "bill_owner": {
+        "id": "f2a6c8e0-4b13-4d57-9e81-3c5a7b9d0f24",
+        "first_name": "Jordan",
+        "last_name": "Sample"
+      },
+      "invoice_number": "INV-1002",
+      "memo": "Fall restock",
+      "vendor_memo": null,
+      "remote_id": null,
+      "invoice_urls": [],
+      "attachments": [],
+      "payment": {
+        "amount": {
+          "amount": 398000,
+          "currency_code": "USD",
+          "minor_unit_conversion_rate": 100
+        },
+        "payment_method": "ACH",
+        "payment_date": null,
+        "effective_date": null,
+        "id": null,
+        "customer_friendly_payment_id": null,
+        "details": {}
+      },
+      "line_items": [
+        {
+          "id": "3eddc7a6-3b49-5291-a6c0-d93fc0495adc",
+          "amount": {
+            "amount": 398000,
+            "currency_code": "USD",
+            "minor_unit_conversion_rate": 100
+          },
+          "memo": "Fall restock",
+          "accounting_field_selections": []
+        }
+      ]
+    }
+  ],
+  "page": {
+    "next": null
+  }
+}
