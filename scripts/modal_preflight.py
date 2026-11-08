@@ -38,8 +38,9 @@ MODAL_APP_PATH = REPO_ROOT / "detector" / "modal_app.py"
 MODAL_APP_MODULE = "detector.modal_app"
 
 # Documented in the detector/modal_app.py docstring: the bearer token the
-# LiveKit agent presents. Everything else the app reads has a default.
-REQUIRED_SECRET_KEYS = ("CALLBACK_API_TOKEN",)
+# LiveKit agent presents, under the name the agent also reads. Everything else
+# the app reads has a default.
+REQUIRED_SECRET_KEYS = ("DETECTOR_TOKEN",)
 
 # Modal API surface detector/modal_app.py depends on. Checked against the
 # installed version so a Modal upgrade that renames something is caught here
@@ -537,7 +538,9 @@ def check_secret(
             if kind == "NotFoundError":
                 hint = (
                     f"Create it (the value is yours, not printed here):\n"
-                    f"  modal secret create {name} CALLBACK_API_TOKEN=<long-random-string>"
+                    f"  modal secret create {name} DETECTOR_TOKEN=<long-random-string>\n"
+                    "Add USERS_ON_FILE_JSON and the three TWILIO_* values to the same\n"
+                    "secret; see the detector/modal_app.py docstring."
                 )
             elif kind == "AuthError":
                 hint = (

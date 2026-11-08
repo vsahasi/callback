@@ -86,6 +86,11 @@ jobs:
       - name: Full test suite
         run: uv run pytest
 
+      # The agent contract (callback_shared) has its own tests and schema
+      # snapshot. The detector serves it under /v1, so a drift fails here too.
+      - name: callback_shared contract tests
+        run: uv run pytest shared/tests -q
+
   lint:
     name: ruff
     runs-on: ubuntu-latest
