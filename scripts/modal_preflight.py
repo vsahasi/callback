@@ -50,6 +50,7 @@ REQUIRED_MODAL_ATTRS = (
     "Image",
     "Secret",
     "asgi_app",
+    "concurrent",
 )
 REQUIRED_IMAGE_METHODS = ("debian_slim", "pip_install", "add_local_python_source")
 REQUIRED_FUNCTION_KWARGS = (
