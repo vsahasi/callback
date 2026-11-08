@@ -486,3 +486,10 @@ def test_the_internal_timeout_verdict() -> None:
     assert verdict.decision.decision is DecisionKind.DENY
     assert verdict.decision.reasons == ["internal_timeout"]
     assert verdict.lock_code == "internal_timeout"
+
+
+def test_a_hold_is_never_turned_into_an_internal_timeout_deny() -> None:
+    verdict = internal_timeout_verdict("ses_x", TIER0.action)
+    assert verdict.decision.decision is DecisionKind.ALLOW
+    assert verdict.decision.reasons == ["tier0_hold"]
+    assert verdict.lock_code is None

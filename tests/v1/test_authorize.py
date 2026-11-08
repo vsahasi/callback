@@ -209,3 +209,44 @@ async def test_reasons_and_logs_hold_no_secrets(
     # request id can hold them by chance.
     for needle in ("Acme", "0123456789abcdef", "bank change", "vendor_bank_last4"):
         assert needle not in text
+
+
+# ------------------------------------------------- M1: holds always pass
+
+HOLD = {
+    "action": "hold_vendor",
+    "params": {"vendor_id": "v1", "vendor_name": "Acme Supplies", "reason": "x"},
+}
+
+
+async def test_a_hold_skips_jitter_above_the_deadline(clock: FakeClock) -> None:
+    settings = base_settings(mock_jitter_min_ms=3000, mock_jitter_max_ms=3000)
+    app = build_app(settings, clock, io.StringIO())
+    async with client_for(app) as client:
+        session_id = await create_session(client)
+        started = time.perf_counter()
+        response = await authorize(
+            client, session_id, {**HOLD, "idempotency_key": "h1"}
+        )
+        elapsed = time.perf_counter() - started
+    assert response.status_code == 200
+    assert response.json()["decision"] == "allow"
+    assert response.json()["reasons"] == ["tier0_hold"]
+    assert response.json()["ttl_s"] == 0
+    assert elapsed < 0.5
+    assert app.state.v1.registry.get(session_id).locked_code is None
+
+
+async def test_a_hold_with_a_policy_bug_is_still_allowed_and_never_locks(
+    v1: httpx.AsyncClient, v1_app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_: Any, **__: Any) -> None:
+        raise RuntimeError("policy bug")
+
+    monkeypatch.setattr(service_module, "evaluate", broken)
+    session_id = await create_session(v1)
+    response = await authorize(v1, session_id, {**HOLD, "idempotency_key": "h1"})
+    assert response.status_code == 200
+    assert response.json()["decision"] == "allow"
+    assert response.json()["reasons"] == ["tier0_hold"]
+    assert v1_app.state.v1.registry.get(session_id).locked_code is None

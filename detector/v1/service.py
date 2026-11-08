@@ -18,6 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 from callback_shared.contract import (
+    ACTION_TIER,
     AUTHORIZE_SERVER_DEADLINE_S,
     AuthorizeRequest,
     CallerUpdate,
@@ -88,6 +89,7 @@ from detector.v1.policy import (
     binding_key,
     evaluate,
     internal_timeout_verdict,
+    tier0_verdict,
 )
 from detector.v1.scenarios import (
     DEEPFAKE_WINDOWS,
@@ -518,6 +520,8 @@ class V1Service:
         cached = self._cached(session, req.idempotency_key, fingerprint)
         if cached is not None:
             return cached  # a replay: no jitter, no new evaluation
+        if ACTION_TIER[req.action] == 0:
+            return self._answer_hold(session, req, fingerprint)
         try:
             async with asyncio.timeout(self.authorize_deadline_s):
                 await self.jitter()
@@ -545,6 +549,30 @@ class V1Service:
         self._apply(session, req.idempotency_key, fingerprint, verdict)
         return verdict.decision
 
+    def _answer_hold(
+        self, session: V1Session, req: AuthorizeRequest, fingerprint: str
+    ) -> WireDecision:
+        """Rule 1: a hold is always allowed, so it is answered at once.
+
+        No jitter and no deadline, so it can never time out, and no failure
+        can turn it into a deny or lock the session.
+        """
+
+        now = self.registry.now()
+        try:
+            verdict = evaluate(self.view(session, now), req, now)
+        except Exception as exc:  # noqa: BLE001
+            self.log(
+                "v1_authorize_failed",
+                level="error",
+                session_id=session.session_id,
+                action=req.action.value,
+                exception=type(exc).__name__,
+            )
+            verdict = tier0_verdict(session.session_id, req.action)
+        self._apply(session, req.idempotency_key, fingerprint, verdict)
+        return verdict.decision
+
     def _apply(
         self,
         session: V1Session,
@@ -553,7 +581,13 @@ class V1Service:
         verdict: Verdict,
     ) -> None:
         decision = verdict.decision
-        if verdict.lock_code is not None and session.locked_code is None:
+        holding = ACTION_TIER[decision.action] == 0
+        # A tier 0 answer never locks a session, whatever it carries.
+        if (
+            verdict.lock_code is not None
+            and session.locked_code is None
+            and not holding
+        ):
             session.locked_code = verdict.lock_code
         if verdict.set_pending_bind:
             session.pending_bind = verdict.pending_bind

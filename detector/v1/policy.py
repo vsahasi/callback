@@ -449,9 +449,30 @@ def decide(view: SessionView, request: AuthorizeRequest, now: float) -> Decision
     return evaluate(view, request, now).decision
 
 
-def internal_timeout_verdict(session_id: str, action: Action) -> Verdict:
-    """Past the deadline, or on any internal exception: deny, and lock."""
+def tier0_verdict(session_id: str, action: Action) -> Verdict:
+    """Rule 1 with nothing else read: holding is always allowed, never locks."""
 
+    return Verdict(
+        Decision(
+            session_id=session_id,
+            action=action,
+            decision=DecisionKind.ALLOW,
+            reasons=[TIER0_REASON],
+            agent_say="",
+            ttl_s=0,
+        )
+    )
+
+
+def internal_timeout_verdict(session_id: str, action: Action) -> Verdict:
+    """Past the deadline, or on any internal exception: deny, and lock.
+
+    Except for a hold: rule 1 outranks every failure, so a tier 0 action gets
+    the plain tier 0 allow instead.
+    """
+
+    if ACTION_TIER[action] == 0:
+        return tier0_verdict(session_id, action)
     return Verdict(
         Decision(
             session_id=session_id,
