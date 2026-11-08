@@ -26,6 +26,8 @@ from callback_shared.contract import (
     ChallengeKind,
     ChallengeStatus,
     FactorReport,
+    OtpCheckResult,
+    OtpSent,
     Role,
     Scenario,
     SessionCreate,
@@ -48,10 +50,15 @@ from detector.v1.errors import (
     ChallengeNotFound,
     InvalidScenario,
     NoOpenEnrollment,
+    OtpNotSent,
+    OtpRateLimited,
+    OtpUnavailable,
     SessionLocked,
+    SmsFailed,
     UserNotFound,
 )
 from detector.v1.logsafe import tag
+from detector.v1.otp import OtpBackend, otp_backend_from_settings
 from detector.v1.scenarios import NO_AUDIO_OUTCOME, ChallengeOutcome, challenge_outcome
 from detector.v1.sessions import (
     MAX_TURNS,
@@ -62,6 +69,11 @@ from detector.v1.sessions import (
     turn_key,
 )
 from detector.v1.users import UserDirectory
+
+# OTP limits per session (ruling section 2.8).
+OTP_SEND_INTERVAL_S = 30.0
+OTP_MAX_SENDS = 3
+OTP_MAX_CHECKS = 5
 
 # Distinct version strings warned about, at most. Auth runs first, so only a
 # caller holding the token can add one, but the set is bounded anyway.
@@ -92,6 +104,7 @@ class V1Service:
         voiceprints: VoicePrintStore,
         clock: Callable[[], float] | None = None,
         directory: UserDirectory | None = None,
+        otp: OtpBackend | None = None,
     ) -> None:
         self.settings = settings
         self.clock: Callable[[], float] = clock or time.time
@@ -102,6 +115,9 @@ class V1Service:
             else UserDirectory.from_settings(settings)
         )
         self.registry = SessionRegistry(self.clock)
+        self.otp: OtpBackend = (
+            otp if otp is not None else otp_backend_from_settings(settings)
+        )
         self.logger: StructuredLogger | None = None
         self._warned_versions: set[str] = set()
         self._warned_scenario_in_real_mode = False
@@ -148,7 +164,7 @@ class V1Service:
         )
 
     async def aclose(self) -> None:
-        return None
+        await self.otp.aclose()
 
     # ------------------------------------------------------------ sessions
 
@@ -300,6 +316,81 @@ class V1Service:
         if record is None:
             raise ChallengeNotFound()
         return record.resolve(self.registry.now()).wire()
+
+    # ----------------------------------------------------------------- OTP
+
+    def _phone_on_file(self, session: V1Session) -> str:
+        user = self.directory.get(session.claimed_user_id)
+        if user is None:  # the directory is fixed at startup, so never
+            raise UserNotFound()
+        return user.phone_e164
+
+    async def otp_send(self, session_id: str) -> OtpSent:
+        session = self.registry.get(session_id)
+        if session.locked_code is not None:
+            raise SessionLocked()
+        if not self.otp.available:
+            raise OtpUnavailable()
+        now = self.registry.now()
+        record = session.otp
+        if len(record.send_times) >= OTP_MAX_SENDS:
+            raise OtpRateLimited(detail="at most 3 sends per session")
+        if record.send_times and now - record.send_times[-1] < OTP_SEND_INTERVAL_S:
+            raise OtpRateLimited(detail="at most 1 send per 30 s")
+        phone = self._phone_on_file(session)
+        try:
+            await self.otp.send(phone)
+        except SmsFailed:
+            self.log(
+                "v1_sms_failed",
+                level="warning",
+                session_id=session.session_id,
+                step="send",
+            )
+            raise
+        # Only a send that went out counts toward the limits.
+        record.send_times.append(now)
+        self.log(
+            "v1_otp_sent", session_id=session.session_id, sends=len(record.send_times)
+        )
+        return OtpSent(sent_to_last_four=phone[-4:])
+
+    async def otp_check(self, session_id: str, code: str) -> OtpCheckResult:
+        session = self.registry.get(session_id)
+        if session.locked_code is not None:
+            raise SessionLocked()
+        if not self.otp.available:
+            raise OtpUnavailable()
+        record = session.otp
+        if not record.sent:
+            raise OtpNotSent()
+        if record.checks >= OTP_MAX_CHECKS:
+            raise OtpRateLimited(detail="at most 5 checks per session")
+        # Counted before the provider answers, so a failing provider cannot be
+        # used to get past the check limit.
+        record.checks += 1
+        try:
+            verified = await self.otp.check(self._phone_on_file(session), code)
+        except SmsFailed:
+            self.log(
+                "v1_sms_failed",
+                level="warning",
+                session_id=session.session_id,
+                step="check",
+            )
+            raise
+        if verified:
+            record.verified = True
+        else:
+            record.failed_checks += 1
+        self.log(
+            "v1_otp_checked",
+            session_id=session.session_id,
+            verified=verified,
+            checks=record.checks,
+            failed_checks=record.failed_checks,
+        )
+        return OtpCheckResult(verified=verified)
 
     # ----------------------------------------------------------------- end
 

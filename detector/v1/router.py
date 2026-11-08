@@ -29,6 +29,9 @@ from callback_shared.contract import (
     ChallengeIssued,
     ChallengeStatus,
     FactorReport,
+    OtpCheck,
+    OtpCheckResult,
+    OtpSent,
     SessionCreate,
     SessionCreated,
     SpeechEvent,
@@ -185,6 +188,20 @@ def build_v1_router(
     async def get_challenge(session_id: str, challenge_id: str) -> ChallengeStatus:
         # No jitter: the agent polls this every 0.25 s with a 1.0 s budget.
         return service.challenge_status(session_id, challenge_id)
+
+    # ------------------------------------------------------- 9, 10: OTP
+
+    @router.post("/sessions/{session_id}/otp/send", response_model=OtpSent)
+    async def otp_send(session_id: str) -> OtpSent:
+        # Any body is ignored: the code goes to the number on file, never to
+        # one the caller gave, so there is nothing to send here.
+        await service.jitter()
+        return await service.otp_send(session_id)
+
+    @router.post("/sessions/{session_id}/otp/check", response_model=OtpCheckResult)
+    async def otp_check(session_id: str, body: OtpCheck) -> OtpCheckResult:
+        await service.jitter()
+        return await service.otp_check(session_id, body.code)
 
     # ------------------------------------------------ 12, 13: factors, end
 
