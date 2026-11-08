@@ -6,7 +6,8 @@ Endpoints:
     GET  /healthz                liveness, contract version, mock flag
 
 Mounted here, defined elsewhere:
-    POST /verify/bank-details    detector.verification
+    POST /verify/bank-details    detector.verification, only when
+                                 CALLBACK_BANK_VERIFY_ENABLED is on
     POST /enrol/voice            detector.enrolment
     POST /enrol/voice/status     detector.enrolment
     POST /enrol/voice/erase      detector.enrolment
@@ -14,7 +15,7 @@ Mounted here, defined elsewhere:
     GET  /review, /review/api/*  detector.review
 
 Auth: a bearer token on every request except /healthz, compared in constant
-time against CALLBACK_API_TOKEN.
+time against DETECTOR_TOKEN (or its old name, CALLBACK_API_TOKEN).
 """
 
 from __future__ import annotations
@@ -126,8 +127,10 @@ def create_app(
 
     # Bank-detail verification. Mounted after app.state.engine is set, because
     # a request that omits voice_decision has the detector read its own verdict
-    # off the session.
-    app.include_router(build_verification_router(resolved))
+    # off the session. The endpoint exists to receive a full account number,
+    # so it is not mounted at all unless CALLBACK_BANK_VERIFY_ENABLED is on.
+    if resolved.bank_verify_enabled:
+        app.include_router(build_verification_router(resolved))
 
     # Enrolment. Shares the pipeline's httpx client rather than opening a
     # second one, because it fetches under the same policy with a longer
@@ -139,9 +142,10 @@ def create_app(
     if resolved.api_token_generated:
         # Loud on purpose: the service is up but can authenticate nobody.
         print(
-            "WARNING: CALLBACK_API_TOKEN was not set, so a random token was "
-            "generated and every request will be rejected with 401. Set the "
-            "token (Modal secret callback-detector) and restart.",
+            "WARNING: DETECTOR_TOKEN was not set (nor its old name "
+            "CALLBACK_API_TOKEN), so a random token was generated and every "
+            "request will be rejected with 401. Set DETECTOR_TOKEN (Modal "
+            "secret callback-detector) and restart.",
             flush=True,
         )
 

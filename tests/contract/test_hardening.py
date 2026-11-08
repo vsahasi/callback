@@ -62,6 +62,7 @@ def test_absent_token_is_generated_not_defaulted(monkeypatch) -> None:
     """
 
     monkeypatch.delenv("CALLBACK_API_TOKEN", raising=False)
+    monkeypatch.delenv("DETECTOR_TOKEN", raising=False)
     settings = Settings.from_env()
 
     assert settings.api_token_generated is True
@@ -77,6 +78,7 @@ def test_empty_token_does_not_authenticate_a_bare_bearer(monkeypatch) -> None:
     """
 
     monkeypatch.setenv("CALLBACK_API_TOKEN", "")
+    monkeypatch.delenv("DETECTOR_TOKEN", raising=False)
     settings = Settings.from_env()
 
     assert settings.api_token_generated is True

@@ -2,6 +2,9 @@
 .env
 .env.*
 !.env.example
+# The real users_on_file directory holds a real phone number. Only the
+# fictional users_on_file.example.json is committed.
+users_on_file.json
 
 # Call data
 recordings/

@@ -114,11 +114,6 @@ The mock OTP code is `424242`. Three attempts, 120 second expiry. Mock mode adds
 150 to 400 ms of simulated latency per request, so client timeout handling gets
 exercised rather than assumed.
 
-Note that the scenario names come from the build brief and read as impersonation
-of a company officer. In this product the impersonated party is the vendor, so
-`real_cfo` means the genuine expected caller. Worth renaming once the contract
-is settled.
-
 ## Fail closed, everywhere
 
 A verification service that fails open is worse than no service. Every failure

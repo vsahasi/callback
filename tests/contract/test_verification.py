@@ -18,6 +18,7 @@ then bump VERIFICATION_VERSION in shared/verification.py.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -897,6 +898,13 @@ def test_no_length_accessor_is_exposed() -> None:
 
 
 # ------------------------------------------------------------- the endpoint
+
+
+@pytest.fixture
+def settings(settings: Settings) -> Settings:
+    """The endpoint is unmounted unless CALLBACK_BANK_VERIFY_ENABLED is on."""
+
+    return dataclasses.replace(settings, bank_verify_enabled=True)
 
 
 def make_app(

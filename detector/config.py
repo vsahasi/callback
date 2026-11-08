@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -32,6 +32,13 @@ def _env_float(name: str, default: float) -> float:
     return float(raw)
 
 
+def _env_str(name: str) -> str | None:
+    """A stripped string, or None when unset or blank."""
+
+    raw = os.environ.get(name, "").strip()
+    return raw or None
+
+
 def _env_hosts(name: str) -> tuple[str, ...]:
     """A comma-separated host allowlist, lowercased, blanks dropped."""
 
@@ -49,9 +56,10 @@ class Settings:
     mock_jitter_min_ms: int
     mock_jitter_max_ms: int
     speech_segments_before_decision: int
-    # True when no CALLBACK_API_TOKEN was supplied and a random one was
-    # generated. The service then refuses every caller, which is the safe
-    # direction: a misnamed or empty secret must not leave the detector open.
+    # True when neither DETECTOR_TOKEN nor CALLBACK_API_TOKEN was supplied and
+    # a random token was generated. The service then refuses every caller,
+    # which is the safe direction: a misnamed or empty secret must not leave
+    # the detector open.
     api_token_generated: bool = False
     # Extra idle time, on top of the TTL, before a session may be
     # evicted. 0 means derive it from the TTL, which is the safe
@@ -104,6 +112,26 @@ class Settings:
     #: more than that.
     enrolment_fetch_timeout_ms: int = 5000
 
+    # --------------------------------------------------- /v1 agent contract
+    #
+    #: POST /verify/bank-details exists to receive a full account number, so
+    #: it is unmounted unless this is switched on. The agent never calls it.
+    bank_verify_enabled: bool = False
+    #: The users_on_file directory (see users_on_file.example.json). The
+    #: inline JSON wins over the path; it is how the Modal secret supplies it.
+    #: Both hold a real phone number, so neither is ever printed: repr=False.
+    users_on_file_path: str | None = None
+    users_on_file_json: str | None = field(default=None, repr=False)
+    #: Twilio Verify, which sends and checks the SMS code. Real mode answers
+    #: 503 otp_unavailable unless all three are set.
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = field(default=None, repr=False)
+    twilio_verify_service_sid: str | None = None
+    #: "" (the default) means mock mode accepts only the mock code and texts
+    #: nothing. "twilio" makes mock mode send and check through Twilio Verify
+    #: when the three values above are set, for the recording.
+    mock_sms: str = ""
+
     @classmethod
     def from_env(cls) -> Settings:
         jitter_min = _env_int("CALLBACK_MOCK_JITTER_MIN_MS", 150)
@@ -117,8 +145,20 @@ class Settings:
         # secret would have left the service wide open. An empty token was
         # worse: compare_digest("", "") is True, so a bare "Bearer "
         # authenticated. Generate an unguessable token instead and fail closed.
-        supplied = os.environ.get("CALLBACK_API_TOKEN", "").strip()
+        #
+        # DETECTOR_TOKEN is the name the agent reads, so it is the primary
+        # one. CALLBACK_API_TOKEN is the old name and still works. Two
+        # different values would 401 every call without a word, so that is
+        # refused at startup instead.
+        primary = os.environ.get("DETECTOR_TOKEN", "").strip()
+        legacy = os.environ.get("CALLBACK_API_TOKEN", "").strip()
+        if primary and legacy and primary != legacy:
+            raise ValueError("DETECTOR_TOKEN and CALLBACK_API_TOKEN differ")
+        supplied = primary or legacy
         generated = not supplied
+        mock_sms = os.environ.get("CALLBACK_MOCK_SMS", "").strip().lower()
+        if mock_sms not in {"", "twilio"}:
+            raise ValueError('CALLBACK_MOCK_SMS must be blank or "twilio"')
         return cls(
             api_token=supplied or secrets.token_urlsafe(32),
             api_token_generated=generated,
@@ -154,4 +194,11 @@ class Settings:
             enrolment_fetch_timeout_ms=_env_int(
                 "CALLBACK_ENROLMENT_FETCH_TIMEOUT_MS", 5000
             ),
+            bank_verify_enabled=_env_bool("CALLBACK_BANK_VERIFY_ENABLED", False),
+            users_on_file_path=_env_str("USERS_ON_FILE_PATH"),
+            users_on_file_json=_env_str("USERS_ON_FILE_JSON"),
+            twilio_account_sid=_env_str("TWILIO_ACCOUNT_SID"),
+            twilio_auth_token=_env_str("TWILIO_AUTH_TOKEN"),
+            twilio_verify_service_sid=_env_str("TWILIO_VERIFY_SERVICE_SID"),
+            mock_sms=mock_sms,
         )
