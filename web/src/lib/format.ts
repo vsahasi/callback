@@ -1,6 +1,13 @@
 import type { Decision } from "./types";
 
 export const POLL_MS = 1500;
+/** A reading older than this many ms (four polls) is not current. */
+export const STALE_AFTER_MS = POLL_MS * 4;
+
+/** True when the last poll failed, nothing has loaded, or the reading is old. */
+export function isStale(updatedAt: number | null, now: number, errored: boolean): boolean {
+  return errored || updatedAt === null || now - updatedAt > STALE_AFTER_MS;
+}
 
 /** Maps any detector decision string onto a colour class. step_up shares challenge's. */
 export function decisionKind(d: string | null | undefined): Decision | "unknown" {

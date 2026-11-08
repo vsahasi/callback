@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePolling } from "@/lib/usePolling";
+import { isStale } from "@/lib/format";
 import type { CallView, ListView } from "@/lib/view";
 import { SessionRail } from "./SessionRail";
 import { CallDetail } from "./CallDetail";
@@ -49,10 +50,20 @@ export function Dashboard() {
     setTheme(cur === "dark" ? "light" : "dark");
   };
 
+  // Re-evaluated every second so a reading that stops refreshing goes grey even
+  // if no further poll ever completes.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const detailStale = isStale(detail.updatedAt, now, Boolean(detail.error));
+  const listStale = isStale(list.updatedAt, now, Boolean(list.error));
+
   const listDown = list.error && !list.data;
 
   return (
-    <div className="shell">
+    <div className={`shell ${listStale ? "rail-stale" : ""}`}>
       <header className="top">
         <div className="brand">
           <span className="mark" aria-hidden>
@@ -69,8 +80,8 @@ export function Dashboard() {
               {detail.data?.kind === "events" && detail.data.bundle.mock_mode && (
                 <span className="chip">MOCK DETECTOR</span>
               )}
-              <span className={`live ${list.error ? "live-bad" : ""}`}>
-                <i /> {list.error ? "NOT LIVE" : "LIVE"}
+              <span className={`live ${listStale || detailStale ? "live-bad" : ""}`}>
+                <i /> {listStale || detailStale ? "NOT LIVE" : "LIVE"}
               </span>
             </>
           )}
@@ -111,7 +122,8 @@ export function Dashboard() {
         ) : (
           <CallDetail
             view={detail.data}
-            stale={Boolean(detail.error)}
+            stale={detailStale}
+            asOf={detail.updatedAt}
             following={following}
             onFollow={() => setPicked(null)}
           />

@@ -4,12 +4,10 @@ import { Notice } from "./States";
 
 export function DetailV1({
   v,
-  stale,
   following,
   onFollow,
 }: {
   v: V1View;
-  stale: boolean;
   following: boolean;
   onFollow: () => void;
 }) {
@@ -18,7 +16,6 @@ export function DetailV1({
   const latest = v.decisions[v.decisions.length - 1];
   return (
     <>
-      {stale && <Notice tone="warn">Refresh failed. Showing the last good reading.</Notice>}
       {!following && (
         <Notice tone="warn">
           This is an older call. <button className="link" onClick={onFollow}>Jump to the newest</button>
