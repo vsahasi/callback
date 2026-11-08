@@ -24,6 +24,10 @@ from callback_shared.contract import ChallengeKind, ChallengeState, ChallengeSta
 from detector.v1.scenarios import ChallengeOutcome
 
 CHALLENGE_TTL_S = 45.0
+# A whole enrollment takes at most 21 (7 prompts, 3 tries each), and a call a
+# handful more. Past this, a create is refused: records are never dropped,
+# because the policy reads every failure and refusal in the session.
+MAX_CHALLENGES_PER_SESSION = 50
 RESOLVE_DELAY_S = 0.7
 ENROLL_PROMPTS = 7
 

@@ -47,6 +47,10 @@ MAX_SESSION_AGE_S = 30 * 60
 IDLE_LIMIT_S = 10 * 60
 EVICT_AFTER_END_S = 60 * 60
 MAX_TURNS = 200
+# Per turn, checked at the route. A minute of speech is a few hundred words.
+MAX_TURN_TEXT_CHARS = 4000
+MAX_TURN_WORDS = 400
+MAX_WORD_CHARS = 64
 MAX_EVENTS = 500
 # The idempotency cache per session. A real call makes a handful of
 # authorize requests; this only bounds a misbehaving client.
@@ -166,8 +170,12 @@ class SessionRegistry:
         max_age_s: float = MAX_SESSION_AGE_S,
         idle_limit_s: float = IDLE_LIMIT_S,
         evict_after_s: float = EVICT_AFTER_END_S,
+        on_evict: Callable[[V1Session], None] | None = None,
     ) -> None:
         self.clock = clock
+        # Called once per evicted session, so state kept outside the session
+        # (completed enrollments) goes with it.
+        self.on_evict = on_evict
         self.max_live = max_live
         self.max_age_s = max_age_s
         self.idle_limit_s = idle_limit_s
@@ -195,9 +203,11 @@ class SessionRegistry:
             session.ended_at is not None
             and now >= session.ended_at + self.evict_after_s
         ):
-            self._sessions.pop(session.session_id, None)
+            evicted = self._sessions.pop(session.session_id, None)
             if self._live_by_room.get(session.room) == session.session_id:
                 del self._live_by_room[session.room]
+            if evicted is not None and self.on_evict is not None:
+                self.on_evict(evicted)
             return True
         return False
 

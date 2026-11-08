@@ -46,9 +46,9 @@ echoes an input value.
 | 2 | `GET /v1/users/{user_id}` | 200 `UserOnFile`, 404 `user_not_found` |
 | 3 | `POST /v1/sessions` (+ `X-Callback-Scenario`) | 200 `SessionCreated`; 404, 409 `session_conflict`, 503 `too_many_sessions`, 400 `invalid_scenario` |
 | 4 | `POST /v1/sessions/{id}/caller` | 204 |
-| 5 | `POST /v1/sessions/{id}/turns` | 204, duplicates dropped |
+| 5 | `POST /v1/sessions/{id}/turns` | 204, duplicates dropped; 422 `validation_error` past 4000 characters of text, 400 words or 64 characters in a word |
 | 6 | `POST /v1/sessions/{id}/events` | 204 |
-| 7 | `POST /v1/sessions/{id}/challenges` | 200 `ChallengeIssued`; 409 `session_locked`, `no_open_enrollment` |
+| 7 | `POST /v1/sessions/{id}/challenges` | 200 `ChallengeIssued`; 409 `session_locked`, `no_open_enrollment`; 429 `too_many_challenges` past 50 in a session |
 | 8 | `GET /v1/sessions/{id}/challenges/{cid}` | 200 `ChallengeStatus`; 404 `challenge_not_found` |
 | 9 | `POST /v1/sessions/{id}/otp/send` | 200 `OtpSent`; 409, 429, 502 `sms_failed`, 503 `otp_unavailable` |
 | 10 | `POST /v1/sessions/{id}/otp/check` | 200 `OtpCheckResult`; 409 `otp_not_sent`, 429 |

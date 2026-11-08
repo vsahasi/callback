@@ -54,8 +54,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from detector.config import Settings
 from detector.enrolment import VoicePrintStore
 from detector.errors import DetectorError
-from detector.v1.errors import ContractVersionMismatch, InternalError, UserNotFound
+from detector.v1.errors import (
+    ContractVersionMismatch,
+    InternalError,
+    UserNotFound,
+    V1ValidationError,
+)
 from detector.v1.service import V1Service
+from detector.v1.sessions import MAX_TURN_TEXT_CHARS, MAX_TURN_WORDS, MAX_WORD_CHARS
 from detector.v1.users import UserDirectory
 
 WIRE_MAJOR = WIRE_CONTRACT_VERSION.split(".", 1)[0]
@@ -172,6 +178,20 @@ def build_v1_router(
 
     @router.post("/sessions/{session_id}/turns", status_code=204)
     async def post_turn(session_id: str, body: Turn) -> Response:
+        # Bounded here, before anything is stored. The detail names the limit,
+        # never the text.
+        if len(body.text) > MAX_TURN_TEXT_CHARS:
+            raise V1ValidationError(
+                detail=f"body.text: at most {MAX_TURN_TEXT_CHARS} characters"
+            )
+        if len(body.words) > MAX_TURN_WORDS:
+            raise V1ValidationError(
+                detail=f"body.words: at most {MAX_TURN_WORDS} entries"
+            )
+        if any(len(word.w) > MAX_WORD_CHARS for word in body.words):
+            raise V1ValidationError(
+                detail=f"body.words.w: at most {MAX_WORD_CHARS} characters"
+            )
         service.add_turn(session_id, body)  # no jitter
         return _no_content()
 

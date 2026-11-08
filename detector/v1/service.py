@@ -52,6 +52,7 @@ from detector.enrolment import VoicePrintStore
 from detector.mock import jitter_seconds
 from detector.observability import StructuredLogger
 from detector.v1.challenges import (
+    MAX_CHALLENGES_PER_SESSION,
     VERIFICATION_KINDS,
     ChallengeRecord,
     make_say,
@@ -78,6 +79,7 @@ from detector.v1.errors import (
     SessionLocked,
     SessionNotFound,
     SmsFailed,
+    TooManyChallenges,
     UserNotFound,
     V1Error,
 )
@@ -159,7 +161,7 @@ class V1Service:
             if directory is not None
             else UserDirectory.from_settings(settings)
         )
-        self.registry = SessionRegistry(self.clock)
+        self.registry = SessionRegistry(self.clock, on_evict=self._forget_session)
         self.consents = ConsentLog()
         self.enrollments: dict[str, EnrollmentRecord] = {}
         self.otp: OtpBackend = (
@@ -323,6 +325,8 @@ class V1Service:
         session = self.registry.get(session_id)
         if session.locked_code is not None:
             raise SessionLocked()
+        if len(session.challenges) >= MAX_CHALLENGES_PER_SESSION:
+            raise TooManyChallenges()
         now = self.registry.now()
         enroll_prompt = (
             self._enroll_prompt(session, now) if kind is ChallengeKind.ENROLL else None
@@ -728,6 +732,16 @@ class V1Service:
             prompts_passed=result.prompts_passed,
         )
         return result
+
+    def _forget_session(self, session: V1Session) -> None:
+        """An evicted session takes its enrollments, completed ones too."""
+
+        for enrollment_id in [
+            eid
+            for eid, record in self.enrollments.items()
+            if record.session_id == session.session_id
+        ]:
+            del self.enrollments[enrollment_id]
 
     def delete_enrollment(self, user_id: str) -> None:
         erased = 0
