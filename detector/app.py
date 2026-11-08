@@ -352,6 +352,7 @@ def create_app(
         settings=resolved,
         config=observability,
         stream=log_stream,
+        v1=v1,
     )
     # /v1 logs through the same structured logger and redactor, and its route
     # templates become known endpoints, so ids never become metric labels.

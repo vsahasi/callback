@@ -99,9 +99,12 @@ from detector.v1.scenarios import (
 )
 from detector.v1.sessions import (
     MAX_CACHED_DECISIONS,
+    MAX_DECISION_HISTORY,
+    MAX_FACTOR_HISTORY,
     MAX_TURNS,
     CachedDecision,
     CallbackRecord,
+    DecisionRecord,
     SessionRegistry,
     TurnRecord,
     V1Session,
@@ -286,8 +289,11 @@ class V1Service:
 
     def report_factor(self, session_id: str, report: FactorReport) -> None:
         session = self.registry.get(session_id)
-        # The latest report wins.
-        session.callback = CallbackRecord(result=report.result, at=self.registry.now())
+        # The latest report wins. Every report is kept for the review surface.
+        record = CallbackRecord(result=report.result, at=self.registry.now())
+        session.callback = record
+        session.factor_history.append(record)
+        del session.factor_history[:-MAX_FACTOR_HISTORY]
         self.log(
             "v1_factor_reported",
             session_id=session.session_id,
@@ -560,6 +566,14 @@ class V1Service:
         )
         while len(session.decisions) > MAX_CACHED_DECISIONS:
             session.decisions.popitem(last=False)
+        session.history.append(
+            DecisionRecord(
+                at=self.registry.now(),
+                idempotency_key=idempotency_key,
+                decision=decision,
+            )
+        )
+        del session.history[:-MAX_DECISION_HISTORY]
         # The optional detector log line (ruling C20): codes and numbers only.
         # Never the params or the Ramp context.
         self.log(

@@ -138,6 +138,23 @@ query or any query string, consent text, the Ramp context, and raw room or
 caller identities (logged as a per-process HMAC tag). `tests/v1/test_log_hygiene.py`
 runs Call 1 and an enrollment with sentinel values and checks the stream.
 
+### Reviewing `/v1` calls
+
+The review surface also shows calls made over `/v1`, read only and outside the
+wire contract, behind the same token guard as the rest of `/review` (bearer or
+basic). `GET /review/api/v1/sessions` lists up to 50 sessions, newest first,
+each with its scenario, claimed user id, channel, last decision, action and
+reasons, and whether it is locked or ended. `GET /review/api/v1/sessions/{id}`
+adds every fresh authorize answer (oldest first, with the Decision's own
+`signals` object, its tier and its idempotency key), the challenges (state and
+scores, never the phrase), the OTP state (sent, the last four of the number on
+file, attempts, verified; never the code), the callback reports, and the
+speech-event types. All times are ISO 8601 UTC. Nothing it returns holds caller
+words, a challenge phrase, a code, a name, or a full phone or bank number.
+Reading a session does not count as a `/v1` call, so it never keeps one alive,
+and an ended session lists no speech events because `/end` drops them. An
+unknown id is a 404 `session_not_found`.
+
 ### Deploy
 
 1. Create the Modal secret `callback-detector` with `DETECTOR_TOKEN` (the same
