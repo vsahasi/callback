@@ -24,6 +24,7 @@ from callback_shared.contract import (
 from callback_shared.contract import (
     CONTRACT_VERSION_HEADER,
     SCENARIO_HEADER,
+    AuthorizeRequest,
     CallerUpdate,
     ChallengeCreate,
     ChallengeIssued,
@@ -38,6 +39,9 @@ from callback_shared.contract import (
     Turn,
     UserOnFile,
     UserSummary,
+)
+from callback_shared.contract import (
+    Decision as WireDecision,
 )
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -202,6 +206,15 @@ def build_v1_router(
     async def otp_check(session_id: str, body: OtpCheck) -> OtpCheckResult:
         await service.jitter()
         return await service.otp_check(session_id, body.code)
+
+    # --------------------------------------------------- 11: authorize
+
+    @router.post("/sessions/{session_id}/authorize", response_model=WireDecision)
+    async def authorize(session_id: str, body: AuthorizeRequest) -> WireDecision:
+        # The jitter is slept inside, under the 2.2 s deadline, and never on an
+        # idempotent replay. Past the deadline, or on any internal failure,
+        # this answers 200 deny internal_timeout rather than an error.
+        return await service.authorize(session_id, body)
 
     # ------------------------------------------------ 12, 13: factors, end
 

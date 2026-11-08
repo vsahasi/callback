@@ -18,9 +18,8 @@ from collections.abc import Callable
 from typing import Any
 
 from callback_shared.contract import (
-    CONTRACT_VERSION as WIRE_CONTRACT_VERSION,
-)
-from callback_shared.contract import (
+    AUTHORIZE_SERVER_DEADLINE_S,
+    AuthorizeRequest,
     CallerUpdate,
     ChallengeIssued,
     ChallengeKind,
@@ -35,6 +34,12 @@ from callback_shared.contract import (
     SpeechEvent,
     Turn,
 )
+from callback_shared.contract import (
+    CONTRACT_VERSION as WIRE_CONTRACT_VERSION,
+)
+from callback_shared.contract import (
+    Decision as WireDecision,
+)
 
 from detector.config import Settings
 from detector.enrolment import VoicePrintStore
@@ -48,20 +53,40 @@ from detector.v1.challenges import (
 )
 from detector.v1.errors import (
     ChallengeNotFound,
+    IdempotencyConflict,
     InvalidScenario,
     NoOpenEnrollment,
     OtpNotSent,
     OtpRateLimited,
     OtpUnavailable,
+    SessionEnded,
     SessionLocked,
     SmsFailed,
     UserNotFound,
+    V1Error,
 )
 from detector.v1.logsafe import tag
 from detector.v1.otp import OtpBackend, otp_backend_from_settings
-from detector.v1.scenarios import NO_AUDIO_OUTCOME, ChallengeOutcome, challenge_outcome
+from detector.v1.policy import (
+    ChallengeView,
+    SessionView,
+    Verdict,
+    binding_key,
+    evaluate,
+    internal_timeout_verdict,
+)
+from detector.v1.scenarios import (
+    DEEPFAKE_WINDOWS,
+    NO_AUDIO_OUTCOME,
+    SCRIPTS,
+    ChallengeOutcome,
+    challenge_outcome,
+    spoof_at,
+)
 from detector.v1.sessions import (
+    MAX_CACHED_DECISIONS,
     MAX_TURNS,
+    CachedDecision,
     CallbackRecord,
     SessionRegistry,
     TurnRecord,
@@ -119,6 +144,8 @@ class V1Service:
             otp if otp is not None else otp_backend_from_settings(settings)
         )
         self.logger: StructuredLogger | None = None
+        # Authorize answers within this, jitter included (ruling 2.10).
+        self.authorize_deadline_s = AUTHORIZE_SERVER_DEADLINE_S
         self._warned_versions: set[str] = set()
         self._warned_scenario_in_real_mode = False
 
@@ -391,6 +418,143 @@ class V1Service:
             failed_checks=record.failed_checks,
         )
         return OtpCheckResult(verified=verified)
+
+    # ------------------------------------------------------------ authorize
+
+    def listening(self, session: V1Session) -> bool:
+        """Real mode: whether the hidden listener hears this call.
+
+        Always False in Round 2: the listener is stretch work (S3), so real
+        mode denies tiers 1 and 2 with no_audio (Notion's DEGRADED rule).
+        """
+
+        return False
+
+    def view(self, session: V1Session, now: float) -> SessionView:
+        """A frozen picture of the session at `now`, for the policy."""
+
+        script = (
+            SCRIPTS[session.scenario]
+            if self.mock_mode and session.scenario is not None
+            else None
+        )
+        challenges = []
+        for record in session.challenges.values():
+            if record.kind not in VERIFICATION_KINDS:
+                continue
+            state = record.resolve(now)
+            challenges.append(
+                ChallengeView(
+                    challenge_id=record.challenge_id,
+                    kind=record.kind,
+                    status=state.status,
+                    phrase_match=state.phrase_match,
+                    speaker_score=state.speaker_score,
+                    reason=state.reason,
+                    issued_at=record.issued_at,
+                    resolved_at=state.resolved_at,
+                    bind=record.bind,
+                    consumed=record.consumed,
+                    answered=record.answered_at is not None,
+                )
+            )
+        return SessionView(
+            session_id=session.session_id,
+            mock_mode=self.mock_mode,
+            listening=self.listening(session),
+            locked_code=session.locked_code,
+            # Real mode has no signals until the listener exists (stretch).
+            voiceprint=script.voiceprint if script else None,
+            spoof=(spoof_at(script.scenario, session.age_s(now)) if script else None),
+            agent=script.agent if script else None,
+            text=script.text if script else None,
+            text_flags=script.text_flags if script else (),
+            deepfake_windows=DEEPFAKE_WINDOWS,
+            challenges=tuple(challenges),
+            caller_changed_at=session.caller_changed_at,
+            otp_sent=session.otp.sent,
+            otp_verified=session.otp.verified,
+            otp_failed_checks=session.otp.failed_checks,
+            callback=session.callback.result if session.callback else None,
+        )
+
+    def _cached(
+        self, session: V1Session, idempotency_key: str, fingerprint: str
+    ) -> WireDecision | None:
+        cached = session.decisions.get(idempotency_key)
+        if cached is None:
+            return None
+        if cached.fingerprint != fingerprint:
+            raise IdempotencyConflict()
+        return cached.decision
+
+    async def authorize(self, session_id: str, req: AuthorizeRequest) -> WireDecision:
+        session = self.registry.get(session_id)
+        fingerprint = binding_key(req.action, req.params)
+        cached = self._cached(session, req.idempotency_key, fingerprint)
+        if cached is not None:
+            return cached  # a replay: no jitter, no new evaluation
+        try:
+            async with asyncio.timeout(self.authorize_deadline_s):
+                await self.jitter()
+                # A same-key request may have finished during the jitter.
+                cached = self._cached(session, req.idempotency_key, fingerprint)
+                if cached is not None:
+                    return cached
+                if session.ended:  # /end arrived during the jitter
+                    raise SessionEnded()
+                now = self.registry.now()
+                verdict = evaluate(self.view(session, now), req, now)
+        except V1Error:
+            raise
+        # Any failure at all denies (fail closed): TimeoutError past the
+        # deadline, and any bug in the policy.
+        except Exception as exc:  # noqa: BLE001
+            self.log(
+                "v1_authorize_failed",
+                level="error",
+                session_id=session.session_id,
+                action=req.action.value,
+                exception=type(exc).__name__,
+            )
+            verdict = internal_timeout_verdict(session.session_id, req.action)
+        self._apply(session, req.idempotency_key, fingerprint, verdict)
+        return verdict.decision
+
+    def _apply(
+        self,
+        session: V1Session,
+        idempotency_key: str,
+        fingerprint: str,
+        verdict: Verdict,
+    ) -> None:
+        decision = verdict.decision
+        if verdict.lock_code is not None and session.locked_code is None:
+            session.locked_code = verdict.lock_code
+        if verdict.set_pending_bind:
+            session.pending_bind = verdict.pending_bind
+        if verdict.consume is not None:
+            consumed = session.challenges.get(verdict.consume)
+            if consumed is not None:
+                consumed.consumed = True
+        session.decisions[idempotency_key] = CachedDecision(
+            fingerprint=fingerprint, decision=decision
+        )
+        while len(session.decisions) > MAX_CACHED_DECISIONS:
+            session.decisions.popitem(last=False)
+        # The optional detector log line (ruling C20): codes and numbers only.
+        # Never the params or the Ramp context.
+        self.log(
+            "v1_decision",
+            session_id=session.session_id,
+            action=decision.action.value,
+            decision=decision.decision.value,
+            reason_code=decision.reasons[0] if decision.reasons else None,
+            required_factors=[f.value for f in decision.required_factors] or None,
+            risk_score=decision.risk_score,
+            ttl_s=decision.ttl_s,
+            locked=session.locked_code,
+        )
 
     # ----------------------------------------------------------------- end
 
