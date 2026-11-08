@@ -31,7 +31,7 @@ It runs in two modes:
 - Mock mode needs no model and no audio. It plays one of five scripted calls through the real state machine and the real scoring code, so you can run against it without the models.
 - Real mode fetches each speech span, decodes it and measures it with classical signal processing in `detector/analysis`. No trained model is in the serving path yet. Real mode can't match a voice to an enrolled person yet either: there is no enrolment store, so that signal reports `not_run` and the call is judged on the other four.
 
-The detector also has a bank-detail check. It compares spoken digits against an expected account number, and the expected number never appears in a response, a log line or an error body. `docs/DETECTOR.md` covers it.
+The detector also has a bank-detail check. It compares spoken digits against an expected account number, and the expected number never appears in a response, a log line or an error body. `docs/DETECTOR.md` covers it. It is off unless `CALLBACK_BANK_VERIFY_ENABLED=1`, and the agent never calls it.
 
 ## Rules we don't break
 
@@ -44,9 +44,9 @@ The detector also has a bank-detail check. It compares spoken digits against an 
 
 ## The contract
 
-<!-- CONTRACT-SECTION: update after the contract is settled -->
+<!-- CONTRACT-SECTION -->
 
-The agent and the detection service talk to each other over the contract in `shared/`. [`docs/CONTRACT.md`](docs/CONTRACT.md) is the reference.
+The agent and the detection service talk over `callback_shared` 1.1.0 (`shared/src/callback_shared/contract.py`), served by the detector under `/v1`. `docs/CONTRACT.md` describes the detector's internal `/events` API, which the agent does not use.
 
 ## Repo layout
 
@@ -157,7 +157,7 @@ uv run python -m detector.analysis.calibration  # the analysis, on synthetic aud
   > To protect your company's account, Callback creates a voiceprint, a set of numbers derived from your voice, and analyzes call audio and transcripts for fraud. Raw audio is not kept. Your data is deleted by November 30, 2026, or sooner if you ask. Do you agree?
 
 - Every call opens with a spoken disclosure that the call is recorded and analyzed by automated fraud checks. California requires consent from every party, so we say it even though we don't keep the audio.
-- The caller does say the full bank numbers aloud. Deepgram transcribes them, and GPT-4.1 receives them as the arguments of the bank-change tool. What the agent passes on to the detection service is set by the contract. The detector never puts an expected account number in a response, a log line or an error body.
+- The caller does say the full bank numbers aloud. Deepgram transcribes them, and GPT-4.1 receives them as the arguments of the bank-change tool. The agent never forwards a full bank number: forwarded turns have every run of 4 or more digits replaced by [NUM] (a 4-6 digit run is kept only in the caller's answer to a voice challenge), and the authorize call carries the last four digits and a keyed fingerprint. The detector never puts an expected account number in a response, a log line or an error body.
 - The exceptions are on Eric's side: training recordings and team test calls. Training speakers sign a separate written form, and we delete those recordings by December 31, 2026. A test call is recorded only with a consent row, and deleted after 7 days. No audio is in this repo, and we don't release raw audio.
 
 ## Team

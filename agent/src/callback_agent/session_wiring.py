@@ -45,6 +45,7 @@ from callback_agent.detector import DetectorClient, DetectorError
 from callback_agent.enrollment import Enrollment
 from callback_agent.gate import CallControl, Gate
 from callback_agent.ramp import RampClient
+from callback_agent.redact import redact_turn
 from callback_agent.safelog import log_failure
 from callback_agent.state import CallState, SpeechInterval
 from callback_agent.stepups import CallbackLeg, StepUps
@@ -226,6 +227,13 @@ def wire_turn_forwarding(
     """
 
     def emit(item: Turn | SpeechEvent) -> None:
+        if isinstance(item, Turn):
+            # No full bank number leaves the agent. Only the caller's first turn after a secret
+            # ask keeps its 4 to 6 digit runs, and that turn uses the exemption up.
+            exempt = item.role is Role.USER and state.answer_exempt
+            item = redact_turn(item, exempt_short_runs=exempt)
+            if item.role is Role.USER:
+                state.answer_exempt = False
         if log_turns:
             logger.info(_describe(item))
         if forwarder is not None:

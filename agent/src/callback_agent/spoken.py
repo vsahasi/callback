@@ -10,6 +10,7 @@ the whole answer against an allowlist instead of looking for a single agreement 
 
 import re
 from itertools import pairwise, product
+from typing import NamedTuple
 
 # Lowercase words and runs of ASCII digits. Punctuation and hyphens only separate them, and an
 # apostrophe inside a word stays in it, so "don't" is one word.
@@ -262,3 +263,84 @@ def parse_yes_no(text: str) -> bool | None:
     if _CORE_WORDS.intersection(words) or has_phrase:
         return True
     return None
+
+
+def is_digit_token(word: str) -> bool:
+    """Whether the lowercase `word` is a numeral, a digit word, "zero" or a tens word.
+
+    "Oh" and "o" are not: they are zeros only next to a digit (see oh_positions).
+    """
+    return _is_digit(word)
+
+
+def oh_positions(words: list[str]) -> set[int]:
+    """Where in the lowercase `words` an "oh" or an "o" is a zero (the rule of parse_spoken_digits)."""
+    return _oh_positions(words)
+
+
+def word_spans(text: str) -> list[tuple[str, int, int]]:
+    """The words of `text`, lowercased, with where each starts and ends in it.
+
+    These are the words parse_spoken_digits reads: numeral runs and letter runs, with an
+    apostrophe kept inside a word. A curly apostrophe counts as a straight one.
+    """
+    return [
+        (m.group(0), m.start(), m.end())
+        for m in _TOKEN.finditer(text.lower().replace("\u2019", "'"))
+    ]
+
+
+class DigitToken(NamedTuple):
+    """One spoken number inside a list of words: words[start:end] say `digits` digits."""
+
+    start: int
+    end: int
+    digits: int
+
+
+def digit_tokens(words: list[str]) -> list[DigitToken]:
+    """The digit tokens of the lowercase `words`, in order, each with how many digits it says.
+
+    - A numeral counts its length, a digit word and "zero" count 1.
+    - "Oh" and "o" count 1, only where oh_positions says they are a zero.
+    - A tens word counts 2, with or without the unit word right after it ("forty two" is one
+      token of 2 digits).
+    - "Double" and "triple" take the digit token right after them, and count 2 or 3 for it.
+
+    Any other word is no token, and it ends the run a caller builds from adjacent tokens.
+    """
+    ohs = oh_positions(words)
+
+    def single(i: int) -> DigitToken | None:
+        word = words[i]
+        if word.isdigit():
+            return DigitToken(i, i + 1, len(word))
+        if word in _DIGIT_WORDS or i in ohs:
+            return DigitToken(i, i + 1, 1)
+        if word in _TENS:
+            if i + 1 < len(words) and words[i + 1] in _UNITS:
+                return DigitToken(i, i + 2, 2)
+            return DigitToken(i, i + 1, 2)
+        return None
+
+    tokens: list[DigitToken] = []
+    i = 0
+    while i < len(words):
+        repeat = _REPEATS.get(words[i], 0)
+        if repeat and i + 1 < len(words):
+            # "double oh seven": the "oh" is a zero here although it stands next to "double".
+            if words[i + 1] in _OH_WORDS:
+                target = DigitToken(i + 1, i + 2, 1)
+            else:
+                target = single(i + 1)
+            if target is not None:
+                tokens.append(DigitToken(i, target.end, repeat * target.digits))
+                i = target.end
+                continue
+        token = single(i)
+        if token is None:
+            i += 1
+            continue
+        tokens.append(token)
+        i = token.end
+    return tokens

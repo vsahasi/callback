@@ -792,3 +792,18 @@ def _shape(fn) -> list[tuple]:
 def test_the_fakes_have_the_shape_of_the_real_thing(fake, real):
     # What passes here would pass against the real classes.
     assert _shape(fake) == _shape(real)
+
+
+async def test_an_enroll_prompt_answer_is_exempt_only_while_it_is_asked(enrollment, capture, state):
+    seen: list[tuple[str, bool]] = []
+    original = capture.ask
+
+    async def spy(prompt, *, timeout_s, secret=False):
+        seen.append((prompt, state.answer_exempt))
+        return await original(prompt, timeout_s=timeout_s, secret=secret)
+
+    capture.ask = spy
+    assert await enrollment.run() == "enrolled"
+    assert [exempt for prompt, exempt in seen if prompt != prompts.CONSENT_TEXT] == [True] * 7
+    assert [exempt for prompt, exempt in seen if prompt == prompts.CONSENT_TEXT] == [False]
+    assert state.answer_exempt is False

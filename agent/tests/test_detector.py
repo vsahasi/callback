@@ -606,16 +606,20 @@ async def test_mock_real_cfo_bank_change_steps_up():
     url = os.environ["DETECTOR_URL"].strip()
     token = os.environ.get("DETECTOR_TOKEN", "").strip()
     async with detector(url, token, scenario=Scenario.REAL_CFO) as c:
+        # The claim must be a user on file: a name the detector can look up, not a made-up id.
+        [eric] = await c.find_users("Eric Catalano")
         created = await c.create_session(
             SessionCreate(
                 room="smoke-room",
                 caller_identity="smoke-caller",
-                claimed_user_id="smoke-user",
-                channel=Channel.BROWSER,
+                claimed_user_id=eric.user_id,
+                channel=Channel.PHONE,
             )
         )
-        decision = await c.authorize(created.session_id, BANK_REQUEST)
-        await c.end_session(created.session_id)
+        try:
+            decision = await c.authorize(created.session_id, BANK_REQUEST)
+        finally:
+            await c.end_session(created.session_id)
     assert decision.decision is DecisionKind.STEP_UP, decision.reasons
     assert decision.required_factors == [
         Factor.VOICE_CHALLENGE,

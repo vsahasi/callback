@@ -69,7 +69,7 @@ D1 names and tiers, from the spec's action-tier table: `hold_vendor` 0, `hold_bi
 | V2 | Phone path. | Set up a paid Telnyx number on Nov 5 with LiveKit inbound and outbound trunks, and make it the main number for phone testing and the callback. LiveKit numbers can't dial out, the Twilio trial blocks SIP, and Telnyx calls draw on the separate 1,000-minute SIP allowance. The free LiveKit number's 50 minutes are a hard cap that has to last through Nov 19, so keep it as a backup and an HD-voice comparison. Telnyx costs roughly $1 a month plus cents per minute and a prepaid top-up. |
 | V3 | Callback on browser calls. | Round 2 supports the callback only on phone calls. A browser caller asking for a tier-2 action is told to call in by phone. |
 | V4 | Enrollment security. | Enrollment requires a verified SMS code first, so nobody can enroll their own voice as the CFO. Only California-based people enroll for the demo, because Illinois BIPA would also need a written release. |
-| V6 | What a deny holds. | Only a denied tier-2 change holds the vendor. A denied read ends the call without a hold, so failed lookups can't freeze payments. If Ramp answers a vendor hold with 202 (pending approval), the agent also holds that vendor's open bills, which take effect at once, and only says "I've placed a hold" when something actually holds. |
+| V6 | What a deny holds. | A denied tier 1 or 2 request that names a vendor holds that vendor, reads included (final contract ruling of 2026-11-07, C31). A denied `list_vendors` names none, so it ends the call without a hold. If Ramp answers a vendor hold with 202 (pending approval), the agent also holds that vendor's open bills, which take effect at once, and only says "I've placed a hold" when something actually holds. |
 | V5 | Demo call 4 needs an AI voice agent that phones in, and nobody owns it. | Veer builds it on Nov 9 as a second LiveKit agent that dials in through the Telnyx trunk (Task 12). |
 
 ## File map
@@ -625,7 +625,7 @@ Rules `Gate.run` must follow:
 7. A `RampError` after `allow` returns `failed` with `prompts.RAMP_FAILED`. It doesn't hold or hang up, and it never retries the write.
 8. Log one line per `authorize` with session id, action, round, decision, factors, reasons and latency in ms.
 
-`detector_params()` returns `params` unchanged, except for `update_vendor_bank_account`, which returns `vendor_id`, `vendor_name`, `new_account_last4`, `new_routing_last4` and `account_fingerprint` = the first 16 hex characters of `sha256(f"{routing}|{account}")`. `idempotency_key` is the first 32 hex characters of `sha256(f"{session_id}|{action}|{json.dumps(detector_params(), sort_keys=True)}|{round_no}")`. `hold_target()` is the vendor for tier-2 vendor actions and the bill's vendor for `release_bill_hold` (the spec says a deny "puts the vendor on hold"). It is `None` for every tier-0 and tier-1 action (V6).
+`detector_params()` returns `params` unchanged, except for `update_vendor_bank_account`, which returns `vendor_id`, `vendor_name`, `new_account_last4`, `new_routing_last4` and `account_fingerprint` = the first 16 hex characters of `sha256(f"{routing}|{account}")`. `idempotency_key` is the first 32 hex characters of `sha256(f"{session_id}|{action}|{json.dumps(detector_params(), sort_keys=True)}|{round_no}")`. `hold_target()` is the vendor for every tier 1 or 2 action whose params name a `vendor_id` (for `release_bill_hold`, the bill's vendor). It is `None` for every tier-0 action and for `list_vendors`, which names no vendor (V6, as changed by the final ruling).
 
 Spoken lines to add to `prompts.py`. The deny wording is from the spec's `agent_say` templates and the call flow:
 
@@ -658,7 +658,8 @@ def test_idempotency_key_changes_per_round():
 def test_hold_targets():
     assert BANK.hold_target() == HoldTarget("vendor", "v1")
     assert ActionRequest.release_bill_hold("b1", "v1").hold_target() == HoldTarget("vendor", "v1")
-    assert ActionRequest.list_vendor_accounts("v1", "Acme Supplies").hold_target() is None   # V6: reads never hold
+    assert ActionRequest.list_vendor_accounts("v1", "Acme Supplies").hold_target() == HoldTarget("vendor", "v1")   # V6 (final ruling): a denied read holds its vendor
+    assert ActionRequest.list_vendors().hold_target() is None
 
 async def test_pending_vendor_hold_also_holds_open_bills():
     # Ramp: vendor hold -> 202; open bills b1, b2 -> hold_bill returns ON_HOLD
@@ -712,7 +713,8 @@ async def test_cancel_during_step_up_never_touches_ramp():
 async def test_pending_approval_is_not_reported_done(): ...  # Ramp answers pending_approval -> status pending_approval
 async def test_ramp_error_after_allow_is_failed_without_hold_or_hangup(): ...
 async def test_failed_hold_on_deny_uses_the_no_hold_line(): ...
-async def test_tier1_deny_ends_the_call_without_a_hold(): ...   # deny on list_vendor_accounts -> no Ramp call, DENY_NOT_HELD
+async def test_tier1_deny_holds_the_vendor_it_names(): ...   # deny on list_vendor_accounts -> hold v1, DENY_HELD
+async def test_a_denied_vendor_list_holds_nothing(): ...   # deny on list_vendors -> no Ramp call, DENY_NOT_HELD
 async def test_each_authorize_is_logged(caplog): ...      # 2 rounds -> 2 log records with action and decision
 ```
 

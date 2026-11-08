@@ -8,9 +8,9 @@ The LLM never decides authorization. This code acts only on what the detection s
   round: the detector is asked again at once. Each round sends a fresh idempotency key. Rounds
   are capped, and a step-up on the last round runs no factor, since a deny would follow it.
 - Everything else takes the deny path: a deny, an exception from the detector or a step-up, a
-  step_up with no factors, and running out of rounds. The deny path holds the vendor of a tier-2
-  request, says whether the hold took, locks the call and hangs up. A locked call refuses every
-  tier 1 or 2 request after that, but holds still run.
+  step_up with no factors, and running out of rounds. The deny path holds the vendor of a tier 1
+  or 2 request that names one, says whether the hold took, locks the call and hangs up. A locked
+  call refuses every tier 1 or 2 request after that, but holds still run.
 - A tier 1 or 2 request that finds the call closing or locked stops with a denied result,
   without speaking or sending anything. That is checked at the start, before each round, before
   each factor and before the Ramp call. The one exception is a deny that arrives after the call
@@ -233,7 +233,7 @@ class Gate:
         return GateResult(outcome.status, outcome.summary)
 
     async def _deny(self, req: ActionRequest) -> GateResult:
-        """Hold the vendor of a tier-2 request, say whether that took, lock the call and hang up.
+        """Hold the vendor of a tier 1 or 2 request that names one, say whether that took, lock the call and hang up.
 
         If the call is closing by the time the hold is done, the caller is gone: it says nothing.
         """
