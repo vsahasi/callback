@@ -144,7 +144,8 @@ The review surface also shows calls made over `/v1`, read only and outside the
 wire contract, behind the same token guard as the rest of `/review` (bearer or
 basic). `GET /review/api/v1/sessions` lists up to 50 sessions, newest first,
 each with its scenario, claimed user id, channel, last decision, action and
-reasons, and whether it is locked or ended. `GET /review/api/v1/sessions/{id}`
+reasons (tier 1 and 2 answers only, so a denied call that ends on a background
+hold still lists as denied), and whether it is locked or ended. `GET /review/api/v1/sessions/{id}`
 adds every fresh authorize answer (oldest first, with the Decision's own
 `signals` object, its tier and its idempotency key), the challenges (state and
 scores, never the phrase), the OTP state (sent, the last four of the number on

@@ -179,9 +179,13 @@ async def test_a_locked_and_ended_session_shows_as_such(
     detail = response.json()
     assert detail["locked"] is True
     assert detail["ended"] is True
-    assert detail["last_action"] == "hold_vendor"
-    assert detail["last_reasons"] == ["tier0_hold"]
+    # The call ended on a background hold allow; the summary shows the deny.
+    assert detail["last_decision"] == "deny"
+    assert detail["last_action"] == "update_vendor_bank_account"
+    assert detail["last_reasons"][0] == "automated_caller"
+    # The hold is still in the decision list.
     assert [d["tier"] for d in detail["decisions"]] == [2, 0]
+    assert detail["decisions"][1]["decision"] == "allow"
     assert detail["decisions"][0]["reasons"][0] == "automated_caller"
     assert detail["otp"] == {
         "sent": False,
@@ -249,3 +253,17 @@ async def test_reading_does_not_keep_a_session_alive(
         await v1.get(f"/review/api/v1/sessions/{call.session_id}")
     detail = (await v1.get(f"/review/api/v1/sessions/{call.session_id}")).json()
     assert detail["ended"] is True  # 12 idle minutes: reviews are not /v1 calls
+
+
+async def test_a_session_with_only_holds_has_no_last_decision(
+    v1: httpx.AsyncClient, clock: FakeClock
+) -> None:
+    call = DemoCall(v1, clock, "real_cfo")
+    await call.start()
+    await call.hold()
+    listed = (await v1.get("/review/api/v1/sessions")).json()["sessions"]
+    assert listed[0]["last_decision"] is None
+    assert listed[0]["last_action"] is None
+    assert listed[0]["last_reasons"] == []
+    detail = (await v1.get(f"/review/api/v1/sessions/{call.session_id}")).json()
+    assert [d["action"] for d in detail["decisions"]] == ["hold_vendor"]

@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from callback_shared.contract import ACTION_TIER
+from callback_shared.contract import ACTION_TIER, Decision
 from pydantic import BaseModel, ConfigDict, Field
 
 from detector.v1.challenges import ChallengeRecord
@@ -117,8 +117,21 @@ def _updated_at(session: V1Session) -> float:
     )
 
 
+def _last_gated(session: V1Session) -> Decision | None:
+    """The latest tier 1 or 2 answer.
+
+    Tier 0 holds are skipped: a denied call ends on a background hold_vendor
+    allow, and the summary must still show the deny.
+    """
+
+    for record in reversed(session.history):
+        if ACTION_TIER[record.decision.action] != 0:
+            return record.decision
+    return None
+
+
 def summary(session: V1Session) -> V1SessionSummary:
-    last = session.history[-1].decision if session.history else None
+    last = _last_gated(session)
     return V1SessionSummary(
         session_id=session.session_id,
         created_at=iso(session.created_at) or "",
