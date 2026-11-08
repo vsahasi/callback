@@ -86,6 +86,24 @@ class Settings:
     audio_fetch_timeout_ms: int = 400
     audio_max_seconds: float = 30.0
 
+    # ------------------------------------------------------------- enrolment
+    #
+    # The reference voices voice_match compares callers against. Enrolment
+    # goes through the same audio transport as call audio, so it is off
+    # whenever CALLBACK_AUDIO_ENABLED is off: one switch, no second way in.
+    #
+    #: Ceiling on stored identities. A put past the cap is refused rather than
+    #: evicting someone else's vendor; see detector/enrolment.py.
+    enrolment_max_identities: int = 10_000
+    #: Name of a modal.Dict to hold the prints, so they survive a deploy and
+    #: are shared across replicas. Empty keeps them in process memory, where
+    #: a restart loses every enrolment.
+    enrolment_dict_name: str | None = None
+    #: Enrolment is not inside a live call, so it is not held to the event
+    #: path's 400 ms. Pulling a whole recording out of an object store needs
+    #: more than that.
+    enrolment_fetch_timeout_ms: int = 5000
+
     @classmethod
     def from_env(cls) -> Settings:
         jitter_min = _env_int("CALLBACK_MOCK_JITTER_MIN_MS", 150)
@@ -127,4 +145,13 @@ class Settings:
             audio_max_bytes=_env_int("CALLBACK_AUDIO_MAX_BYTES", 8 * 1024 * 1024),
             audio_fetch_timeout_ms=_env_int("CALLBACK_AUDIO_FETCH_TIMEOUT_MS", 400),
             audio_max_seconds=_env_float("CALLBACK_AUDIO_MAX_SECONDS", 30.0),
+            enrolment_max_identities=_env_int(
+                "CALLBACK_ENROLMENT_MAX_IDENTITIES", 10_000
+            ),
+            enrolment_dict_name=(
+                os.environ.get("CALLBACK_ENROLMENT_DICT_NAME", "").strip() or None
+            ),
+            enrolment_fetch_timeout_ms=_env_int(
+                "CALLBACK_ENROLMENT_FETCH_TIMEOUT_MS", 5000
+            ),
         )

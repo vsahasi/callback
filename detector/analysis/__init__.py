@@ -48,6 +48,7 @@ from detector.analysis.liveness import analyse_liveness
 from detector.analysis.replay import analyse_replay
 from detector.analysis.synthesis import analyse_synthesis
 from detector.analysis.voice import analyse_voice_match
+from detector.analysis.voiceprint import VoicePrint, voiceprint_from
 
 __all__ = [
     "DEFAULT_WEIGHTS",
@@ -57,6 +58,7 @@ __all__ = [
     "CallMetadata",
     "Cue",
     "DetectorResult",
+    "VoicePrint",
     "analyse_behaviour",
     "analyse_call",
     "analyse_liveness",
@@ -64,4 +66,5 @@ __all__ = [
     "analyse_synthesis",
     "analyse_voice_match",
     "build_context",
+    "voiceprint_from",
 ]

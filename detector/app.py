@@ -7,6 +7,9 @@ Endpoints:
 
 Mounted here, defined elsewhere:
     POST /verify/bank-details    detector.verification
+    POST /enrol/voice            detector.enrolment
+    POST /enrol/voice/status     detector.enrolment
+    POST /enrol/voice/erase      detector.enrolment
     GET  /metrics                detector.review
     GET  /review, /review/api/*  detector.review
 
@@ -29,6 +32,11 @@ from fastapi.responses import JSONResponse
 
 from detector import mock
 from detector.config import Settings
+from detector.enrolment import (
+    VoicePrintStore,
+    build_enrolment_router,
+    store_from_settings,
+)
 from detector.errors import DetectorError, Unauthorized
 from detector.observability import ObservabilityConfig
 from detector.pipeline import AudioPipeline
@@ -52,6 +60,7 @@ def create_app(
     *,
     observability: ObservabilityConfig | None = None,
     log_stream: TextIO | None = None,
+    voiceprints: VoicePrintStore | None = None,
 ) -> FastAPI:
     """Build the app. Tests call this directly with explicit settings.
 
@@ -60,15 +69,29 @@ def create_app(
     default, and a test that asserts on log lines needs to hand it a stream
     and a config it controls. Both default to the production behaviour, which
     is `ObservabilityConfig.from_env()` writing JSON lines to stdout.
+
+    `voiceprints` is the same seam for the enrolment store, so a test can
+    hand over a pre-populated one instead of enrolling over HTTP first.
     """
 
     resolved = settings or Settings.from_env()
     engine = DetectorEngine(resolved)
 
+    # The reference voices voice_match compares callers against. One store per
+    # app, shared by the enrolment routes that write it and the pipeline that
+    # reads it.
+    prints = voiceprints if voiceprints is not None else store_from_settings(resolved)
+
     # Fetch, decode and analyse real call audio. Inert in mock mode and inert
     # with CALLBACK_AUDIO_ENABLED unset, which is the default, so in both of
     # those the route pays one boolean for it.
-    audio = AudioPipeline(resolved)
+    audio = AudioPipeline(
+        resolved,
+        voiceprints=prints,
+        # Only called for a span that is about to be analysed and whose event
+        # did not repeat the claim, so most calls never pay for it.
+        identity_of=engine.claimed_identity,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -99,11 +122,19 @@ def create_app(
     app.state.settings = resolved
     app.state.engine = engine
     app.state.audio = audio
+    app.state.voiceprints = prints
 
     # Bank-detail verification. Mounted after app.state.engine is set, because
     # a request that omits voice_decision has the detector read its own verdict
     # off the session.
     app.include_router(build_verification_router(resolved))
+
+    # Enrolment. Shares the pipeline's httpx client rather than opening a
+    # second one, because it fetches under the same policy with a longer
+    # timeout, and a timeout is per request in detector.audio.
+    app.include_router(
+        build_enrolment_router(resolved, store=prints, client_of=audio.http)
+    )
 
     if resolved.api_token_generated:
         # Loud on purpose: the service is up but can authenticate nobody.

@@ -21,30 +21,44 @@ fail-closed property comes out of the scoring layer rather than out of an
 exception: a session that reaches a decision with nothing scored blends to
 1.0 and is refused.
 
-What this cannot do yet
------------------------
-`voice_match` needs an enrolment recording of the claimed identity and there
-is no enrolment store, so in real mode that factor reports `not_run` rather
-than a guess. It carries the largest weight, 0.35, so a real-mode call is
-currently judged on the remaining four signals with the weights renormalised
-over them. That renormalisation is exactly the condition that made a diluted
-FAIL dangerous, which is why the guard in `detector.scoring` exists and why it
-matters more in real mode than it ever did in mock.
+Finding the reference
+---------------------
+`voice_match` needs the enrolled print of whoever the caller claims to be. The
+identity comes off the event when the agent repeats it, and otherwise off the
+session, where it was recorded when the call started. That second lookup is
+why `identity_of` is a callable handed in at construction rather than a store
+this module reaches into: resolving it costs a session read, and it only
+happens for a span that is actually going to be analysed.
+
+An identity with nothing enrolled leaves `voice_match` at `not_run`, which is
+the state every call was in before this store existed. It carries the largest
+weight, 0.35, so such a call is judged on the remaining four signals with the
+weights renormalised over them. That renormalisation is exactly the condition
+that makes a diluted FAIL dangerous, which is why the guard in
+`detector.scoring` exists and why enrolling a vendor matters: it is the
+difference between four signals and five.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import httpx
 
 from detector.analysis.behaviour import CallMetadata
 from detector.analysis.engine import AnalysisEngine
+from detector.analysis.voiceprint import VoicePrint
 from detector.audio import AudioPolicy, AudioUnavailable, LoadedAudio, load_span
 from detector.config import Settings
 from shared.contract import EventRequest, EventType, Factor
+
+if TYPE_CHECKING:  # pragma: no cover - import for typing only
+    # Imported lazily so the pipeline does not pull the web layer in with it.
+    from detector.enrolment import VoicePrintStore
 
 __all__ = ["AudioPipeline", "SpanResult"]
 
@@ -85,12 +99,16 @@ class AudioPipeline:
         *,
         engine: AnalysisEngine | None = None,
         client: httpx.AsyncClient | None = None,
+        voiceprints: VoicePrintStore | None = None,
+        identity_of: Callable[[str], str | None] | None = None,
     ) -> None:
         self.policy = AudioPolicy.from_settings(settings)
         self.mock_mode = settings.mock_mode
         self._engine = engine or AnalysisEngine()
         self._client = client
         self._owns_client = client is None
+        self._voiceprints = voiceprints
+        self._identity_of = identity_of
 
     @property
     def active(self) -> bool:
@@ -108,7 +126,15 @@ class AudioPipeline:
             await self._client.aclose()
             self._client = None
 
-    def _http(self) -> httpx.AsyncClient:
+    def http(self) -> httpx.AsyncClient:
+        """The shared keep-alive client, created on first use.
+
+        Public because the enrolment router fetches under the same policy and
+        should not open a second connection pool for it. Lazy because a
+        deployment in mock mode, or with audio switched off, never fetches
+        anything and should not hold a client open for the whole process.
+        """
+
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self.policy.timeout_seconds, follow_redirects=False
@@ -129,7 +155,7 @@ class AudioPipeline:
 
         started = asyncio.get_running_loop().time()
         try:
-            loaded = await load_span(request.audio, self.policy, client=self._http())
+            loaded = await load_span(request.audio, self.policy, client=self.http())
         except AudioUnavailable as exc:
             logger.warning(
                 "audio span unavailable",
@@ -167,8 +193,35 @@ class AudioPipeline:
             loaded.samples,
             loaded.sample_rate,
             metadata=metadata if not metadata.is_empty else None,
-            # No enrolment store yet, so voice_match reports not_run rather
-            # than being handed the caller's own audio as its own reference,
-            # which would score 1.00 for everyone including the attacker.
-            reference_audio=None,
+            reference=self._reference_for(request),
         )
+
+    def _reference_for(self, request: EventRequest) -> VoicePrint | None:
+        """The enrolled print of whoever this caller claims to be.
+
+        Returns None for an identity with nothing enrolled, and for a store
+        that cannot answer. A store failure must not end a live call: without
+        a reference the comparison does not run, which removes a signal and
+        pushes the decision toward deny, so the failure direction is the safe
+        one.
+        """
+
+        if self._voiceprints is None:
+            return None
+        identity = request.claimed_user_id
+        if not identity and self._identity_of is not None:
+            try:
+                identity = self._identity_of(request.session_id)
+            except Exception:
+                logger.exception("claimed identity lookup raised")
+                return None
+        if not identity:
+            return None
+        try:
+            enrolment = self._voiceprints.get(identity)
+        except Exception:
+            # A malformed stored record or an unreachable dict. Logged, not
+            # raised: see the docstring.
+            logger.exception("voice print lookup failed")
+            return None
+        return enrolment.voice if enrolment is not None else None
