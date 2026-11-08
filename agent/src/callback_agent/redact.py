@@ -3,8 +3,9 @@
 People read account and routing numbers in groups, with filler between, and Flux can split a number
 across turns. So a rule by run length leaks, and the rule here does not look at length:
 - Outside a challenge answer, every numeral becomes [NUM], whatever its length, and so does every
-  run of two or more spoken digit words ("zero two one", "oh four two", "double four five"). A
-  single digit word ("one") stays, so ordinary speech survives.
+  run of two or more spoken number words ("zero two one", "oh four two", "double four five",
+  "forty two", "twenty-one", "one hundred twenty"). The digit words, the teens, the tens, "hundred"
+  and "thousand" all count. A single word ("one", "forty") stays, so ordinary speech survives.
 - In the caller's answer to a voice challenge or an enroll prompt (`exempt_short_runs`), the digits
   are the challenge itself and are forwarded as spoken. Only a run of 7 or more digits, which is
   never a challenge, is redacted there.
@@ -28,7 +29,6 @@ _BANK_SIZED = 7  # digits: in a challenge answer, a run this long is never the c
 # Words that can sit in a run without being a digit token on their own: "oh" and "o" next to a
 # digit, and "double" and "triple" before one. digit_tokens decides whether they count.
 _DIGIT_LIKE = {"oh", "o", "double", "triple"}
-_REPEATS = {"double", "triple"}
 _BREAK = "\0"  # stands for a word that is no digit token, in a list of words
 
 
@@ -38,9 +38,8 @@ class _Run:
     def __init__(self, index: int) -> None:
         self.first = self.last = index
         self.digits = 0
-        self.tokens = 0
+        self.words = 0
         self.numeral = False
-        self.repeat = False
 
 
 def _runs(tokens: list[DigitToken], words: list[str], joined) -> list[tuple[_Run, bool]]:
@@ -59,11 +58,10 @@ def _runs(tokens: list[DigitToken], words: list[str], joined) -> list[tuple[_Run
             run = _Run(index)
             runs.append(run)
         run.digits += token.digits
-        run.tokens += 1
+        run.words += token.end - token.start
         span = words[token.start : token.end]
         run.numeral = run.numeral or any(w.isdigit() for w in span)
-        run.repeat = run.repeat or span[0] in _REPEATS
-    return [(run, run.numeral or run.tokens >= 2 or run.repeat) for run in runs]
+    return [(run, run.numeral or run.words >= 2) for run in runs]
 
 
 def _redacts(run: _Run, always: bool, exempt_short_runs: bool) -> bool:
