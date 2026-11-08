@@ -1,0 +1,77 @@
+{
+  "data": [
+    {
+      "id": "c41a8e07-95d2-4b3f-8e6a-1f7b0d2c9a53",
+      "name": "Initech LLC",
+      "display_name": null,
+      "name_legal": "Initech LLC",
+      "description": "Software consulting",
+      "is_active": true,
+      "is_deletable": false,
+      "country": "US",
+      "state": "TX",
+      "address": {
+        "address_line_1": "77 Placeholder Road",
+        "address_line_2": null,
+        "city": "Austin",
+        "country": "US",
+        "postal_code": "78701",
+        "state": "TX"
+      },
+      "addresses": [
+        {
+          "id": "62ad35eb-609e-51ff-8624-325a6226d149",
+          "is_default": true,
+          "pay_to_name": "Initech LLC",
+          "address_line_1": "77 Placeholder Road",
+          "address_line_2": null,
+          "city": "Austin",
+          "country": "US",
+          "postal_code": "78701",
+          "state": "TX"
+        }
+      ],
+      "tax_address": null,
+      "contacts": [
+        "6a8c0e2f-4b13-4d57-8f91-5c7e9a1b3d46"
+      ],
+      "default_entity_id": "5e3b7d90-1c2a-4f68-b4d7-8a0e6c9f2d11",
+      "external_vendor_id": null,
+      "accounting_vendor_remote_id": null,
+      "merchant_id": null,
+      "parent_vendor_id": null,
+      "vendor_owner_id": "f2a6c8e0-4b13-4d57-9e81-3c5a7b9d0f24",
+      "vendor_type": "BUSINESS",
+      "federal_tax_classification": null,
+      "billing_frequency": null,
+      "net_payment_terms": 30,
+      "sk_category_id": null,
+      "sk_category_name": null,
+      "total_spend_all_time": {
+        "amount": 120000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_last_30_days": {
+        "amount": 12000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_last_365_days": {
+        "amount": 120000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "total_spend_ytd": {
+        "amount": 120000,
+        "currency_code": "USD",
+        "minor_unit_conversion_rate": 100
+      },
+      "created_at": "2026-10-20T21:30:02+00:00",
+      "updated_at": "2026-11-02T18:05:44+00:00"
+    }
+  ],
+  "page": {
+    "next": null
+  }
+}

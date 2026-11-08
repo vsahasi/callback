@@ -1,5 +1,9 @@
 # Integrating the voice agent with the detector
 
+> This describes the detector's internal `/events` dev API. The agent contract is
+> `callback_shared` 1.1.0 (`shared/src/callback_shared/contract.py`), served under
+> `/v1`; see `docs/DETECTOR.md`.
+
 For Veer. Copy-paste oriented. This is the "how do I use it" guide;
 [`docs/CONTRACT.md`](CONTRACT.md) is the "what does the wire look like"
 reference. Where they overlap, CONTRACT.md wins on field names and types, and

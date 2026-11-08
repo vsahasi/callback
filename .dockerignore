@@ -1,0 +1,22 @@
+# What `lk agent create` and `docker build` leave out of the build context. The context goes to
+# LiveKit's build service, so no secret or call audio can be in it, and it should stay small.
+.env
+.env.*
+**/.env
+**/.env.*
+**/recordings
+**/*.wav
+**/*.mp3
+
+# Local environments and caches. A copied macOS .venv would shadow the one `uv sync` builds.
+.venv
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+
+# Not part of the image
+.git
+.worktrees
+.superpowers
+docs/research_notes

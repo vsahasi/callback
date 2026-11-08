@@ -1,0 +1,134 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { usePolling } from "@/lib/usePolling";
+import { isStale } from "@/lib/format";
+import type { CallView, ListView } from "@/lib/view";
+import { SessionRail } from "./SessionRail";
+import { CallDetail } from "./CallDetail";
+import { ErrorPanel, Notice } from "./States";
+
+export function Dashboard() {
+  const list = usePolling<ListView>("/api/sessions");
+  const [picked, setPicked] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark" | null>(null);
+
+  const sessions = useMemo(
+    () =>
+      [...(list.data?.sessions ?? [])].sort(
+        (a, b) => Date.parse(b.at) - Date.parse(a.at),
+      ),
+    [list.data],
+  );
+  const newest = sessions[0]?.session_id ?? null;
+  const following = picked === null;
+  const selected = picked ?? newest;
+
+  const detail = usePolling<CallView>(
+    selected ? `/api/sessions/${encodeURIComponent(selected)}` : null,
+  );
+
+  // /?session=<id> opens a specific call, for linking and screenshots.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("session");
+    if (id) setPicked(id);
+  }, []);
+
+  useEffect(() => {
+    if (theme) {
+      document.documentElement.dataset.theme = theme;
+      try {
+        localStorage.setItem("theme", theme);
+      } catch {}
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    const cur =
+      document.documentElement.dataset.theme ??
+      (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    setTheme(cur === "dark" ? "light" : "dark");
+  };
+
+  // Re-evaluated every second so a reading that stops refreshing goes grey even
+  // if no further poll ever completes.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const detailStale = isStale(detail.updatedAt, now, Boolean(detail.error));
+  const listStale = isStale(list.updatedAt, now, Boolean(list.error));
+
+  const listDown = list.error && !list.data;
+
+  return (
+    <div className={`shell ${listStale ? "rail-stale" : ""}`}>
+      <header className="top">
+        <div className="brand">
+          <span className="mark" aria-hidden>
+            {"◐"}
+          </span>
+          <span className="name">Callback</span>
+          <span className="sub">caller verification</span>
+        </div>
+        <div className="top-right">
+          {list.fixtures ? (
+            <span className="chip chip-warn">SAMPLE DATA</span>
+          ) : (
+            <>
+              {detail.data?.kind === "events" && detail.data.bundle.mock_mode && (
+                <span className="chip">MOCK DETECTOR</span>
+              )}
+              <span className={`live ${listStale || detailStale ? "live-bad" : ""}`}>
+                <i /> {listStale || detailStale ? "NOT LIVE" : "LIVE"}
+              </span>
+            </>
+          )}
+          <button className="btn" onClick={toggleTheme} aria-label="Toggle light and dark theme">
+            Theme
+          </button>
+        </div>
+      </header>
+
+      <SessionRail
+        sessions={sessions}
+        selected={selected}
+        following={following}
+        loading={list.loading}
+        error={list.error}
+        onPick={(id) => setPicked(id === newest ? null : id)}
+      />
+
+      <main className="main">
+        {list.error && list.data && (
+          <Notice tone="bad">
+            Lost the detector ({list.error.message}). What you see below may be out of date.
+          </Notice>
+        )}
+        {listDown ? (
+          <ErrorPanel error={list.error!} />
+        ) : list.loading ? (
+          <div className="state">Connecting to the detector...</div>
+        ) : !selected ? (
+          <div className="state">
+            <h2>No calls yet</h2>
+            <p>The next call will appear here on its own.</p>
+          </div>
+        ) : detail.error && !detail.data ? (
+          <ErrorPanel error={detail.error} />
+        ) : !detail.data ? (
+          <div className="state">Loading call...</div>
+        ) : (
+          <CallDetail
+            view={detail.data}
+            stale={detailStale}
+            asOf={detail.updatedAt}
+            following={following}
+            onFollow={() => setPicked(null)}
+          />
+        )}
+      </main>
+    </div>
+  );
+}

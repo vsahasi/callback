@@ -1,0 +1,56 @@
+[project]
+name = "callback-agent"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "callback-shared",
+    "livekit-agents[deepgram,openai,cartesia,silero]~=1.8",
+    "livekit-api>=1.2,<2",
+    "aiohttp>=3.14",  # callback_leg.py imports it directly, as livekit-api does
+    "httpx>=0.28",
+    "pydantic>=2.11,<3",  # same floor as shared/
+    "python-dotenv>=1.0",
+    "numpy>=1.26",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=1.0",
+    "respx>=0.22",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/callback_agent"]
+
+# The agent installs the contract from the sibling folder. The detector (Eric) is a separate uv
+# project: livekit-agents pins livekit==1.1.21 and the detector pins livekit 1.2.0, so the two
+# cannot share an environment. That is also why shared/ depends on pydantic only.
+[tool.uv.sources]
+callback-shared = { path = "../shared", editable = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"  # set on purpose: when unset, pytest-asyncio warns on every run
+markers = [
+    "mock_detector: needs DETECTOR_URL, a running detection service or its mock",
+    "llm: needs OPENAI_API_KEY and calls the real model",
+    "ramp_sandbox: needs RAMP_CLIENT_ID and calls the Ramp sandbox",
+]
+
+# The agent has its own lint policy, because ruff uses the nearest config and the root ruff.toml
+# is the detector's (py311, stricter rules). Without this section the root file applies here.
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "SIM", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Copied unchanged from LiveKit (its first line is a long URL), so it is not reflowed.
+"tests/fake_llm.py" = ["E501"]

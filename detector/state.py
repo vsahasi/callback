@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from detector import scoring
 from detector.config import Settings
 from detector.errors import (
+    DetectorError,
     InvalidScenario,
     OtpExhausted,
     OtpExpired,
@@ -589,6 +590,23 @@ class DetectorEngine:
             latency_ms=0,
             idempotent_replay=False,
         )
+
+    def claimed_identity(self, session_id: str) -> str | None:
+        """Who this call's caller says they are, if it has been recorded.
+
+        A plain read, deliberately not through `update()`: unlike
+        `factors_for` this cannot change the session, and the caller is the
+        audio pipeline looking for an enrolment reference mid-call, not a
+        client asking about a session. A session that does not exist yet, or a
+        store that cannot answer, returns None, which leaves `voice_match`
+        unrun and the decision one signal poorer. That is the safe direction.
+        """
+
+        try:
+            session = self.store.get(session_id)
+        except DetectorError:
+            return None
+        return session.claimed_user_id
 
     def factors_for(self, session_id: str) -> FactorsResponse:
         def apply(session: Session) -> FactorsResponse:

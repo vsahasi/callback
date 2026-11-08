@@ -1,0 +1,5 @@
+{"trunk": {"name": "telnyx out",
+  "address": "sip.telnyx.com",
+  "numbers": ["<TELNYX_NUMBER>"],
+  "headers": {"X-Telnyx-Username": "<TELNYX_SIP_USER>"},
+  "headers_to_attributes": {"X-Telnyx-Username": "<TELNYX_SIP_USER>"}}}

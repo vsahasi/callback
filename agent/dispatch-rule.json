@@ -1,0 +1,3 @@
+{"dispatch_rule": {"name": "callback inbound",
+  "rule": {"dispatch_rule_callee": {"room_prefix": "call-", "randomize": true}},
+  "room_config": {"agents": [{"agent_name": "callback"}]}}}

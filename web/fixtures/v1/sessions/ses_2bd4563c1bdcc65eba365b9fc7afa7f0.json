@@ -1,0 +1,130 @@
+{
+ "session_id": "ses_2bd4563c1bdcc65eba365b9fc7afa7f0",
+ "created_at": "2026-11-08T05:36:37.980788+00:00",
+ "updated_at": "2026-11-08T05:36:40.008229+00:00",
+ "scenario": "human_impostor",
+ "claimed_user_id": "u_eric",
+ "channel": "phone",
+ "last_decision": "deny",
+ "last_action": "update_vendor_bank_account",
+ "last_reasons": [
+  "speaker_mismatch",
+  "voiceprint_fail 0.29<0.45",
+  "spoof_low 0.05",
+  "text_high 0.80",
+  "text_flags: urgency, verification_refusal"
+ ],
+ "locked": true,
+ "ended": true,
+ "decisions": [
+  {
+   "at": "2026-11-08T05:36:38.294990+00:00",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "step_up",
+   "reasons": [
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "required_factors": [
+    "voice_challenge",
+    "sms_otp",
+    "callback_on_file"
+   ],
+   "ttl_s": 120,
+   "idempotency_key": "de12485ae545df8c07da4e0c22d3c2ab",
+   "signals": {
+    "voiceprint": {
+     "score": 0.29,
+     "threshold": 0.62,
+     "passed": false,
+     "phrase_match": null
+    },
+    "deepfake": {
+     "spoof_prob": 0.05,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.8,
+     "flags": [
+      {
+       "type": "urgency",
+       "evidence": ""
+      },
+      {
+       "type": "verification_refusal",
+       "evidence": ""
+      }
+     ]
+    },
+    "agent_likelihood": 0.05,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T05:36:39.710767+00:00",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "deny",
+   "reasons": [
+    "speaker_mismatch",
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "752879f3cd7d4710d7ce90d59c6502de",
+   "signals": {
+    "voiceprint": {
+     "score": 0.29,
+     "threshold": 0.62,
+     "passed": false,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.05,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.8,
+     "flags": [
+      {
+       "type": "urgency",
+       "evidence": ""
+      },
+      {
+       "type": "verification_refusal",
+       "evidence": ""
+      }
+     ]
+    },
+    "agent_likelihood": 0.05,
+    "otp": "n/a"
+   }
+  }
+ ],
+ "challenges": [
+  {
+   "challenge_id": "chl_9062c3c50c83e743",
+   "kind": "phrase",
+   "status": "failed",
+   "phrase_match": true,
+   "speaker_score": 0.29,
+   "reason": "speaker_mismatch",
+   "issued_at": "2026-11-08T05:36:38.576597+00:00",
+   "resolved_at": "2026-11-08T05:36:39.279690+00:00"
+  }
+ ],
+ "otp": {
+  "sent": false,
+  "sent_to_last_four": null,
+  "attempts": 0,
+  "verified": null
+ },
+ "factors": [],
+ "events": []
+}

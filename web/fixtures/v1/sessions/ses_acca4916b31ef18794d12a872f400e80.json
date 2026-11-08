@@ -1,0 +1,94 @@
+{
+ "session_id": "ses_acca4916b31ef18794d12a872f400e80",
+ "created_at": "2026-11-08T05:36:43.231901+00:00",
+ "updated_at": "2026-11-08T05:36:51.821541+00:00",
+ "scenario": "real_cfo",
+ "claimed_user_id": "u_eric",
+ "channel": "phone",
+ "last_decision": null,
+ "last_action": null,
+ "last_reasons": [],
+ "locked": false,
+ "ended": true,
+ "decisions": [],
+ "challenges": [
+  {
+   "challenge_id": "chl_7c66c1f5b44b6f90",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:44.175278+00:00",
+   "resolved_at": "2026-11-08T05:36:44.877859+00:00"
+  },
+  {
+   "challenge_id": "chl_3fd218050799b83f",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:45.275260+00:00",
+   "resolved_at": "2026-11-08T05:36:45.981377+00:00"
+  },
+  {
+   "challenge_id": "chl_3649dafa91873d13",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:46.274598+00:00",
+   "resolved_at": "2026-11-08T05:36:46.981602+00:00"
+  },
+  {
+   "challenge_id": "chl_73673b762b0fec01",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:47.248404+00:00",
+   "resolved_at": "2026-11-08T05:36:47.955294+00:00"
+  },
+  {
+   "challenge_id": "chl_224e6996d73b72eb",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:48.279843+00:00",
+   "resolved_at": "2026-11-08T05:36:48.984377+00:00"
+  },
+  {
+   "challenge_id": "chl_fe08dbfa7abf33e5",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:49.343068+00:00",
+   "resolved_at": "2026-11-08T05:36:50.048305+00:00"
+  },
+  {
+   "challenge_id": "chl_547e53d4704d8789",
+   "kind": "enroll",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": null,
+   "reason": null,
+   "issued_at": "2026-11-08T05:36:50.406592+00:00",
+   "resolved_at": "2026-11-08T05:36:51.111781+00:00"
+  }
+ ],
+ "otp": {
+  "sent": true,
+  "sent_to_last_four": "0100",
+  "attempts": 1,
+  "verified": true
+ },
+ "factors": [],
+ "events": []
+}

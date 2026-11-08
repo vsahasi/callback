@@ -1,0 +1,17 @@
+{
+  "error_v2": {
+    "error_code": "DEVELOPER_7001",
+    "additional_info": {
+      "page_size": [
+        "Value must be between 2 and 100"
+      ]
+    },
+    "notes": "",
+    "message": "Value must be between 2 and 100"
+  },
+  "error": {
+    "page_size": [
+      "Value must be between 2 and 100"
+    ]
+  }
+}

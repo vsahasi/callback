@@ -15,6 +15,7 @@ np = pytest.importorskip("numpy")
 from detector.analysis.dsp import build_context  # noqa: E402
 from detector.analysis.synthetic import SpeechStyle, live_speech, silence  # noqa: E402
 from detector.analysis.voice import analyse_voice_match  # noqa: E402
+from detector.analysis.voiceprint import voiceprint_from  # noqa: E402
 from shared.contract import FactorVerdict  # noqa: E402
 
 RATE = 8000
@@ -23,7 +24,9 @@ RATE = 8000
 def _compare(probe: np.ndarray, reference: np.ndarray | None):
     return analyse_voice_match(
         build_context(probe, RATE),
-        build_context(reference, RATE) if reference is not None else None,
+        voiceprint_from(build_context(reference, RATE))
+        if reference is not None
+        else None,
     )
 
 

@@ -1,0 +1,461 @@
+{
+  "enrolment_version": "0.1.0-provisional",
+  "enums": {
+    "EnrolmentQuality": [
+      "good",
+      "thin",
+      "unusable"
+    ]
+  },
+  "limits": {
+    "max_identity_length": 128,
+    "min_confident_voiced_seconds": 1.5
+  },
+  "models": {
+    "EnrolmentRecord": {
+      "$defs": {
+        "EnrolmentQuality": {
+          "description": "How much a comparison against this reference will be worth.",
+          "enum": [
+            "good",
+            "thin",
+            "unusable"
+          ],
+          "title": "EnrolmentQuality",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "What the service will say about a stored enrolment.\n\nCarries no feature of the voice itself. See the module docstring.",
+      "properties": {
+        "duration_s": {
+          "description": "Length of the recording.",
+          "minimum": 0.0,
+          "title": "Duration S",
+          "type": "number"
+        },
+        "enrolled_at": {
+          "format": "date-time",
+          "title": "Enrolled At",
+          "type": "string"
+        },
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "quality": {
+          "$ref": "#/$defs/EnrolmentQuality"
+        },
+        "sample_rate_hz": {
+          "description": "Rate the analysis ran at, after any decimation.",
+          "minimum": 0,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        },
+        "source": {
+          "description": "Scheme and host the recording came from. Never the full uri, which may carry a credential in its query string.",
+          "title": "Source",
+          "type": "string"
+        },
+        "voiced_seconds": {
+          "description": "Voiced speech found in the recording.",
+          "minimum": 0.0,
+          "title": "Voiced Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "identity",
+        "enrolled_at",
+        "quality",
+        "voiced_seconds",
+        "duration_s",
+        "sample_rate_hz",
+        "source"
+      ],
+      "title": "EnrolmentRecord",
+      "type": "object"
+    },
+    "EnrolmentRequest": {
+      "$defs": {
+        "AudioEncoding": {
+          "enum": [
+            "pcm_s16le",
+            "opus",
+            "flac"
+          ],
+          "title": "AudioEncoding",
+          "type": "string"
+        },
+        "AudioRef": {
+          "additionalProperties": false,
+          "description": "A span of call audio. Audio is referenced, never inlined in JSON.",
+          "properties": {
+            "encoding": {
+              "$ref": "#/$defs/AudioEncoding",
+              "default": "pcm_s16le"
+            },
+            "end_ms": {
+              "description": "Exclusive end offset from session start.",
+              "minimum": 0,
+              "title": "End Ms",
+              "type": "integer"
+            },
+            "sample_rate_hz": {
+              "default": 16000,
+              "maximum": 48000,
+              "minimum": 8000,
+              "title": "Sample Rate Hz",
+              "type": "integer"
+            },
+            "start_ms": {
+              "description": "Offset from session start.",
+              "minimum": 0,
+              "title": "Start Ms",
+              "type": "integer"
+            },
+            "track_id": {
+              "description": "LiveKit track identifier.",
+              "title": "Track Id",
+              "type": "string"
+            },
+            "uri": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Optional out-of-band location (object store) for the span.",
+              "title": "Uri"
+            }
+          },
+          "required": [
+            "track_id",
+            "start_ms",
+            "end_ms"
+          ],
+          "title": "AudioRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "POST /enrol/voice body.",
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRef",
+          "description": "Where the enrolment recording is. Fetched under the same policy as call audio, so the host must be allowlisted."
+        },
+        "identity": {
+          "description": "The claimed_user_id this reference belongs to. Matched byte for byte after trimming whitespace.",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Identity",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Operator note about where the recording came from. Returned verbatim; never used for matching.",
+          "title": "Label"
+        },
+        "replace": {
+          "default": false,
+          "description": "Overwrite an existing enrolment for this identity. Required, because silently replacing a reference would let anyone holding the service token swap in their own voice.",
+          "title": "Replace",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "identity",
+        "audio"
+      ],
+      "title": "EnrolmentRequest",
+      "type": "object"
+    },
+    "EnrolmentResponse": {
+      "$defs": {
+        "EnrolmentQuality": {
+          "description": "How much a comparison against this reference will be worth.",
+          "enum": [
+            "good",
+            "thin",
+            "unusable"
+          ],
+          "title": "EnrolmentQuality",
+          "type": "string"
+        },
+        "EnrolmentRecord": {
+          "additionalProperties": false,
+          "description": "What the service will say about a stored enrolment.\n\nCarries no feature of the voice itself. See the module docstring.",
+          "properties": {
+            "duration_s": {
+              "description": "Length of the recording.",
+              "minimum": 0.0,
+              "title": "Duration S",
+              "type": "number"
+            },
+            "enrolled_at": {
+              "format": "date-time",
+              "title": "Enrolled At",
+              "type": "string"
+            },
+            "identity": {
+              "title": "Identity",
+              "type": "string"
+            },
+            "label": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Label"
+            },
+            "quality": {
+              "$ref": "#/$defs/EnrolmentQuality"
+            },
+            "sample_rate_hz": {
+              "description": "Rate the analysis ran at, after any decimation.",
+              "minimum": 0,
+              "title": "Sample Rate Hz",
+              "type": "integer"
+            },
+            "source": {
+              "description": "Scheme and host the recording came from. Never the full uri, which may carry a credential in its query string.",
+              "title": "Source",
+              "type": "string"
+            },
+            "voiced_seconds": {
+              "description": "Voiced speech found in the recording.",
+              "minimum": 0.0,
+              "title": "Voiced Seconds",
+              "type": "number"
+            }
+          },
+          "required": [
+            "identity",
+            "enrolled_at",
+            "quality",
+            "voiced_seconds",
+            "duration_s",
+            "sample_rate_hz",
+            "source"
+          ],
+          "title": "EnrolmentRecord",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "POST /enrol/voice 200 response.",
+      "properties": {
+        "detail": {
+          "description": "One sentence an operator can act on.",
+          "maxLength": 500,
+          "title": "Detail",
+          "type": "string"
+        },
+        "enrolment_version": {
+          "default": "0.1.0-provisional",
+          "title": "Enrolment Version",
+          "type": "string"
+        },
+        "record": {
+          "$ref": "#/$defs/EnrolmentRecord"
+        },
+        "stored": {
+          "title": "Stored",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "stored",
+        "record",
+        "detail"
+      ],
+      "title": "EnrolmentResponse",
+      "type": "object"
+    },
+    "EnrolmentStatus": {
+      "$defs": {
+        "EnrolmentQuality": {
+          "description": "How much a comparison against this reference will be worth.",
+          "enum": [
+            "good",
+            "thin",
+            "unusable"
+          ],
+          "title": "EnrolmentQuality",
+          "type": "string"
+        },
+        "EnrolmentRecord": {
+          "additionalProperties": false,
+          "description": "What the service will say about a stored enrolment.\n\nCarries no feature of the voice itself. See the module docstring.",
+          "properties": {
+            "duration_s": {
+              "description": "Length of the recording.",
+              "minimum": 0.0,
+              "title": "Duration S",
+              "type": "number"
+            },
+            "enrolled_at": {
+              "format": "date-time",
+              "title": "Enrolled At",
+              "type": "string"
+            },
+            "identity": {
+              "title": "Identity",
+              "type": "string"
+            },
+            "label": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Label"
+            },
+            "quality": {
+              "$ref": "#/$defs/EnrolmentQuality"
+            },
+            "sample_rate_hz": {
+              "description": "Rate the analysis ran at, after any decimation.",
+              "minimum": 0,
+              "title": "Sample Rate Hz",
+              "type": "integer"
+            },
+            "source": {
+              "description": "Scheme and host the recording came from. Never the full uri, which may carry a credential in its query string.",
+              "title": "Source",
+              "type": "string"
+            },
+            "voiced_seconds": {
+              "description": "Voiced speech found in the recording.",
+              "minimum": 0.0,
+              "title": "Voiced Seconds",
+              "type": "number"
+            }
+          },
+          "required": [
+            "identity",
+            "enrolled_at",
+            "quality",
+            "voiced_seconds",
+            "duration_s",
+            "sample_rate_hz",
+            "source"
+          ],
+          "title": "EnrolmentRecord",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "GET /enrol/voice/{identity} 200 response.\n\nAnswers one question, so the onboarding tool can tell whether a vendor\nstill needs enrolling without guessing from a 404.",
+      "properties": {
+        "enrolled": {
+          "title": "Enrolled",
+          "type": "boolean"
+        },
+        "enrolment_version": {
+          "default": "0.1.0-provisional",
+          "title": "Enrolment Version",
+          "type": "string"
+        },
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        },
+        "record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnrolmentRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "identity",
+        "enrolled"
+      ],
+      "title": "EnrolmentStatus",
+      "type": "object"
+    },
+    "ErasureResponse": {
+      "additionalProperties": false,
+      "description": "DELETE /enrol/voice/{identity} 200 response.\n\nPresent because the thing being stored is derived from biometric data and\na vendor may ask for it to be gone. `deleted` false means there was\nnothing stored, which is not an error.",
+      "properties": {
+        "deleted": {
+          "title": "Deleted",
+          "type": "boolean"
+        },
+        "enrolment_version": {
+          "default": "0.1.0-provisional",
+          "title": "Enrolment Version",
+          "type": "string"
+        },
+        "identity": {
+          "title": "Identity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "deleted"
+      ],
+      "title": "ErasureResponse",
+      "type": "object"
+    },
+    "IdentityBody": {
+      "additionalProperties": false,
+      "description": "Body of the two routes that only name an identity.\n\nA body rather than a path segment or a query parameter, because a vendor's\nuser id in the request line is logged by every proxy on the way in. See\nthe note on `build_enrolment_router`.",
+      "properties": {
+        "identity": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Identity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity"
+      ],
+      "title": "IdentityBody",
+      "type": "object"
+    }
+  }
+}

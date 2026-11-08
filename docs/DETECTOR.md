@@ -16,12 +16,168 @@ The service runs in two modes. Mock mode drives five scripted scenarios
 through the real state machine and needs no audio, which is what the agent is
 built against. Real mode fetches each speech span, decodes it and measures it
 with the classical detectors in `detector/analysis`, which is covered below.
+All five signals run in real mode once a vendor has a reference voice stored;
+until then `voice_match` reports `not_run` and the call is judged on four.
 
 The contract is frozen by a schema snapshot. Nothing is deployed, and no
 trained model is in the serving path: real mode is signal processing, not
 inference.
 
+## `/v1`: the agent contract
+
+The agent talks to this service over `callback_shared` 1.1.0
+(`shared/src/callback_shared/contract.py`), served under `/v1` by
+`detector/v1`. That file is the only contract between the two sides; the
+final contract ruling of 2026-11-07 settled it. Everything else on this page
+(`/events`, `/factors`, `/enrol/voice*`, `/review`) is the detector's internal
+dev API, which the agent never calls.
+
+Every `/v1` request needs `Authorization: Bearer <DETECTOR_TOKEN>` (checked
+first) and `X-Contract-Version: 1.1.0`. A missing header or another major
+version is a 400 `contract_version_mismatch`; another minor or patch version
+is served, with one warning per version string. Every response carries
+`X-Contract-Version: 1.1.0`, and every non-2xx body is callback_shared's
+`ErrorResponse{contract_version, error: {code, message, detail}}`, which never
+echoes an input value.
+
+| # | Route | Answers |
+|---|---|---|
+| 1 | `GET /v1/users?name=` | 200 `list[UserSummary]`, exact match after normalising |
+| 2 | `GET /v1/users/{user_id}` | 200 `UserOnFile`, 404 `user_not_found` |
+| 3 | `POST /v1/sessions` (+ `X-Callback-Scenario`) | 200 `SessionCreated`; 404, 409 `session_conflict`, 503 `too_many_sessions`, 400 `invalid_scenario` |
+| 4 | `POST /v1/sessions/{id}/caller` | 204 |
+| 5 | `POST /v1/sessions/{id}/turns` | 204, duplicates dropped; 422 `validation_error` past 4000 characters of text, 400 words or 64 characters in a word |
+| 6 | `POST /v1/sessions/{id}/events` | 204 |
+| 7 | `POST /v1/sessions/{id}/challenges` | 200 `ChallengeIssued`; 409 `session_locked`, `no_open_enrollment`; 429 `too_many_challenges` past 50 in a session |
+| 8 | `GET /v1/sessions/{id}/challenges/{cid}` | 200 `ChallengeStatus`; 404 `challenge_not_found` |
+| 9 | `POST /v1/sessions/{id}/otp/send` | 200 `OtpSent`; 409, 429, 502 `sms_failed`, 503 `otp_unavailable` |
+| 10 | `POST /v1/sessions/{id}/otp/check` | 200 `OtpCheckResult`; 409 `otp_not_sent`, 429 |
+| 11 | `POST /v1/sessions/{id}/authorize` | 200 `Decision`; 409 `idempotency_conflict` |
+| 12 | `POST /v1/sessions/{id}/factors` | 204, the latest report wins |
+| 13 | `POST /v1/sessions/{id}/end` | 204, idempotent |
+| 14 | `POST /v1/enrollments` | 200 `EnrollmentStarted`; 409 `claim_mismatch`, `otp_not_verified`, `session_locked` |
+| 15 | `POST /v1/enrollments/{id}/complete` | 200 `EnrollmentResult`; 404 `enrollment_not_found` |
+| 16 | `DELETE /v1/enrollments/{user_id}` | 204, idempotent, both channels (operator use) |
+
+A route with a session id also answers 404 `session_not_found`, and 409
+`session_ended` once the session has ended (except `/end`).
+
+### Run it locally
+
+```bash
+# terminal 1, repo root
+DETECTOR_TOKEN=dev-local CALLBACK_MOCK_MODE=1 USERS_ON_FILE_PATH=users_on_file.example.json \
+  uv run uvicorn detector.app:app --port 8000 --no-access-log
+
+# terminal 2: the agent's conformance test against it
+cd agent && DETECTOR_URL=http://127.0.0.1:8000 DETECTOR_TOKEN=dev-local \
+  uv run pytest -m mock_detector tests/test_conformance.py tests/test_detector.py -v
+```
+
+`--no-access-log` matters: uvicorn's access log writes the query string, and
+`GET /v1/users?name=` puts a caller's name there. The observability layer logs
+route templates instead (`/v1/sessions/{session_id}/authorize`), never ids or
+query strings. `make run` passes it too.
+
+A quick check by hand:
+
+```bash
+H=(-H "Authorization: Bearer dev-local" -H "X-Contract-Version: 1.1.0")
+curl -s "${H[@]}" "localhost:8000/v1/users?name=Eric%20Catalano"
+curl -s "${H[@]}" -H "X-Callback-Scenario: real_cfo" -H "Content-Type: application/json" \
+  -d '{"room":"r1","caller_identity":"sip_x","claimed_user_id":"u_eric","channel":"phone"}' \
+  localhost:8000/v1/sessions
+```
+
+### Environment
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DETECTOR_TOKEN` | generated, so every call is a 401 | The bearer token. The agent reads the same name. |
+| `CALLBACK_API_TOKEN` | unset | The old name, read only when `DETECTOR_TOKEN` is blank. Both set and different: the process refuses to start. |
+| `CALLBACK_MOCK_MODE` | `true` | Mock mode runs the five scripts below. |
+| `USERS_ON_FILE_JSON` | unset | The user directory, inline JSON. Wins over the path. How the Modal secret supplies it. |
+| `USERS_ON_FILE_PATH` | unset | The user directory as a file. `users_on_file.example.json` is the committed example (a fictional 555-01xx number); the real `users_on_file.json` is gitignored. With neither set the directory is empty and a loud warning is printed. A bad file stops startup. |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID` | unset | Twilio Verify. Real mode answers 503 `otp_unavailable` without all three. |
+| `CALLBACK_MOCK_SMS` | blank | `twilio` makes mock mode send and check through Twilio Verify (when the three are set), for the recording. Blank: mock mode accepts only `424242` and texts nothing. |
+| `CALLBACK_BANK_VERIFY_ENABLED` | off | Mounts `POST /verify/bank-details`. The agent never calls it. |
+| `CALLBACK_MOCK_JITTER_MIN_MS`, `CALLBACK_MOCK_JITTER_MAX_MS` | 150, 400 | Mock latency, slept on every `/v1` route except `/turns`, `/events`, the challenge poll and an idempotent authorize replay. |
+
+### The mock scripts
+
+The scenario is pinned at `POST /v1/sessions` by `X-Callback-Scenario`
+(default `real_cfo`; an unknown value is a 400). They run through the same
+policy a real call would, with no special cases.
+
+| Scenario | Voiceprint | Spoof | Agent | Text, flags | digits / phrase challenge | Demo outcome |
+|---|---|---|---|---|---|---|
+| `real_cfo` | 0.83 | 0.04 | 0.05 | 0.10 | passed, speaker 0.83 | step_up `[voice_challenge, sms_otp, callback_on_file]`, step_up `[voice_challenge]` after `/caller`, then allow |
+| `cloned_voice` | 0.78 | 0.30, then 0.92 from 6.0 s | 0.10 | 0.20 | passed, speaker 0.78 | deny `synthetic_speech` |
+| `replay` | 0.80 | 0.45 | 0.10 | 0.20 | failed, `phrase_match` false | deny `challenge_failed_replay` |
+| `ai_agent` | 0.70 | 0.85 | 0.90 | 0.40 | passed, speaker 0.70 | deny `automated_caller` |
+| `human_impostor` | 0.29 | 0.05 | 0.05 | 0.80, `urgency`, `verification_refusal` | failed, speaker 0.29 | deny `speaker_mismatch` |
+
+Every scenario: the OTP code is `424242`, `enroll` prompts pass, and
+`complete` answers `enrolled` with 7 prompts. A challenge stays `pending` until
+the first user turn received after it was issued and resolves 700 ms later;
+with no turn it expires after 45 s. `tests/v1/test_demo_calls.py` replays all
+five calls of the ruling's section 5 over HTTP.
+
+The first deny locks the session: from then on only holds (tier 0) are
+allowed, and new challenges, codes and enrollments are refused with 409
+`session_locked`. A decision never ends a session; `/end`, 30 minutes or 10
+idle minutes do. At most 5 sessions are live at once.
+
+Real mode has no listener in Round 2, so tier 1 and 2 requests deny with
+`no_audio` and challenges fail with `no_audio`.
+
+### What is never logged
+
+Turn text and words, a challenge `say`, an OTP code, a phone number, the name
+query or any query string, consent text, the Ramp context, and raw room or
+caller identities (logged as a per-process HMAC tag). `tests/v1/test_log_hygiene.py`
+runs Call 1 and an enrollment with sentinel values and checks the stream.
+
+### Reviewing `/v1` calls
+
+The review surface also shows calls made over `/v1`, read only and outside the
+wire contract, behind the same token guard as the rest of `/review` (bearer or
+basic). `GET /review/api/v1/sessions` lists up to 50 sessions, newest first,
+each with its scenario, claimed user id, channel, last decision, action and
+reasons (tier 1 and 2 answers only, so a denied call that ends on a background
+hold still lists as denied), and whether it is locked or ended. `GET /review/api/v1/sessions/{id}`
+adds every fresh authorize answer (oldest first, with the Decision's own
+`signals` object, its tier and its idempotency key), the challenges (state and
+scores, never the phrase), the OTP state (sent, the last four of the number on
+file, attempts, verified; never the code), the callback reports, and the
+speech-event types. All times are ISO 8601 UTC. Nothing it returns holds caller
+words, a challenge phrase, a code, a name, or a full phone or bank number.
+Reading a session does not count as a `/v1` call, so it never keeps one alive,
+and an ended session lists no speech events because `/end` drops them. An
+unknown id is a 404 `session_not_found`.
+
+### Deploy
+
+1. Create the Modal secret `callback-detector` with `DETECTOR_TOKEN` (the same
+   value as the agent's), `USERS_ON_FILE_JSON` holding the real number, and
+   `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`.
+   Give every user in `USERS_ON_FILE_JSON` `aliases` for how speech-to-text
+   may spell their name ("Erik Catalano", "Eric Catalono", and so on, as in
+   `users_on_file.example.json`). Name search is an exact match after
+   normalising, so a spelling that is not listed finds nobody and the call
+   stalls at identification.
+2. `uv run --extra deploy python scripts/modal_preflight.py`, then
+   `modal deploy detector/modal_app.py`.
+3. Send the URL to the agent side as `DETECTOR_URL`.
+4. After the first deployed call, grep the Modal logs for `name=` and for the
+   phone digits, and confirm both are absent.
+
 ## Two open questions for the contract
+
+Both are settled for the agent by the final contract ruling of 2026-11-07:
+`/v1` decides `allow`, `step_up` or `deny`, and the detector sends and checks
+the SMS code through Twilio Verify (see the `/v1` section above). What follows
+describes the internal `/events` API as it was written.
 
 The wire contract is `0.1.0-provisional`. It was written from the Day-1 build
 brief, not from the Notion Contract tab, which was unreachable at the time. Two
@@ -60,8 +216,8 @@ uv run pytest
 57 tests, under a second. Then run the service:
 
 ```bash
-export CALLBACK_API_TOKEN=any-long-random-string
-uv run uvicorn detector.app:app --port 8000
+export DETECTOR_TOKEN=any-long-random-string
+uv run uvicorn detector.app:app --port 8000 --no-access-log
 ```
 
 ```bash
@@ -74,10 +230,19 @@ curl -s localhost:8000/healthz
 |---|---|---|
 | POST | `/events` | Push a call event, get a decision |
 | GET | `/factors/{session_id}` | Current factor breakdown for a session |
+| POST | `/enrol/voice` | Store a vendor's reference voice |
+| POST | `/enrol/voice/status` | Whether an identity has one stored |
+| POST | `/enrol/voice/erase` | Remove one |
 | GET | `/healthz` | Liveness, contract version, mock flag |
 
-`/events` and `/factors` need `Authorization: Bearer <CALLBACK_API_TOKEN>`.
-`/healthz` does not.
+Everything except `/healthz` needs `Authorization: Bearer
+<DETECTOR_TOKEN>` (or its old name, `CALLBACK_API_TOKEN`).
+`POST /verify/bank-details` is mounted only with
+`CALLBACK_BANK_VERIFY_ENABLED=1`. The agent's routes are under `/v1`, above.
+
+The two enrolment routes that only read are POSTs with the identity in the
+body, which looks wrong and is deliberate: a vendor's user id in a path or a
+query string is written into every access log between the caller and here.
 
 ## The five scenarios
 
@@ -105,11 +270,6 @@ The mock OTP code is `424242`. Three attempts, 120 second expiry. Mock mode adds
 150 to 400 ms of simulated latency per request, so client timeout handling gets
 exercised rather than assumed.
 
-Note that the scenario names come from the build brief and read as impersonation
-of a company officer. In this product the impersonated party is the vendor, so
-`real_cfo` means the genuine expected caller. Worth renaming once the contract
-is settled.
-
 ## Fail closed, everywhere
 
 A verification service that fails open is worse than no service. Every failure
@@ -126,15 +286,22 @@ path resolves to DENY:
 ## Layout
 
 ```
-shared/contract.py     Pydantic v2 wire models, CONTRACT_VERSION, client policy
+shared/src/callback_shared/contract.py  The agent contract, callback_shared 1.1.0
+detector/v1/           The agent contract's routes: users, sessions, challenges,
+                       OTP, the authorize policy, enrollment (see /v1 above)
+tests/v1/              The /v1 suites, the five demo calls, log hygiene
+users_on_file.example.json  The example user directory (fictional number)
+shared/contract.py     Internal /events models, CONTRACT_VERSION, client policy
 shared/client.py       Fail-closed reference client for the agent side
 shared/verification.py Spoken digits against the expected number
+shared/enrolment.py    Wire models for storing a reference voice
 detector/app.py        FastAPI surface, bearer auth, error shaping
 detector/state.py      Session state machine, OTP policy, idempotency
 detector/evidence.py   The seam: scripted or measured, one shape either way
 detector/scoring.py    Risk blending, thresholds, fatal-factor rule
 detector/mock.py       The five scripted scenarios
 detector/audio.py      Fetching and decoding a span, and what it refuses
+detector/enrolment.py  Reference voices: the store and the endpoint
 detector/pipeline.py   Span to factors, off the event loop
 detector/analysis/     The classical detectors, numpy only
 detector/store.py      Session store: in memory, or modal.Dict
@@ -160,17 +327,30 @@ uv run uvicorn detector.app:app --port 8021
 uv run python examples/drive_real.py --base-url http://127.0.0.1:8021 --token kit-test
 ```
 
-That prints live, replayed and synthetic audio going through the real path:
+That runs every case twice, once with nothing enrolled for the vendor and
+again after storing a reference voice, because the difference is the point:
 
 ```
-what the caller sent                       decision    risk  signals
-a live caller                              allow       0.07  3 measured, none failed
-the same voice, played back down the line  deny        0.30  fail: replay
-a synthesiser reading the same script      deny        0.59  fail: synthetic_speech, liveness
-a recording first, then a live voice       deny        0.34  fail: replay
-no audio at all                            deny        1.00  none measured
-a span this deployment will not fetch      deny        1.00  none measured
+what the caller sent                             not enrolled            enrolled  voice_match
+a live caller                                      allow 0.07          allow 0.04  pass
+a different person reading the script              allow 0.05      challenge 0.37  fail
+the same voice, played back down the line           deny 0.30           deny 0.17  pass
+a synthesiser reading the same script               deny 0.59      challenge 0.35  pass
+a recording first, then a live voice                deny 0.34           deny 0.20  pass
+no audio at all                                     deny 1.00           deny 1.00  absent
+a span this deployment will not fetch               deny 1.00           deny 1.00  absent
 ```
+
+Read the second row first. Without a reference voice, a different person
+reading the attacker's script is **allowed** at 0.05. Synthesis, replay and
+liveness all pass it, because a live human at a handset is exactly what they
+are looking for. `voice_match` is the only signal that can catch it and it
+cannot run without something to compare against. That is what enrolment
+fixes, and it is why `voice_match` carries the largest weight in the first
+place.
+
+The fourth row goes the other way, and the section on enrolment below
+explains why that is the intended policy rather than a regression.
 
 ### Where the audio comes from
 
@@ -227,17 +407,115 @@ away. The cost is that a single unlucky span pulls the whole call down with no
 way back up, which is the right trade for a thirty-second verification call
 and would not be for a long one.
 
-### What real mode cannot do yet
+### Enrolment: the reference voice
 
-`voice_match` needs an enrolment recording of the claimed identity. There is
-no enrolment store, so it reports `not_run` rather than guessing. It carries
-the largest weight at 0.35, so a real-mode call is judged on the remaining
-four signals with the weights renormalised over them. That renormalisation is
-exactly the condition that makes a diluted FAIL dangerous, which is why the
-guard in `detector/scoring.py` matters more here than it ever did in mock
-mode. The replay case in the table above is that guard firing: the replay
-scores 0.12, just above the 0.10 fatal line, and the blend lands at 0.30,
-which without the guard would have been an allow.
+`voice_match` compares the caller against a recording of the vendor from a
+call that was already trusted. One POST per vendor, once, out of band:
+
+```bash
+curl -X POST http://127.0.0.1:8021/enrol/voice \
+  -H "Authorization: Bearer kit-test" -H "Content-Type: application/json" \
+  -d '{"identity": "cfo@northwind.example",
+       "label": "invoice call 2026-03-02",
+       "audio": {"track_id": "enrol", "start_ms": 0, "end_ms": 6000,
+                 "sample_rate_hz": 8000, "encoding": "pcm_s16le",
+                 "uri": "https://your-bucket.example/vendor-123.wav"}}'
+```
+
+The recording is fetched through the same transport and the same allowlist as
+call audio, so enrolment is off whenever `CALLBACK_AUDIO_ENABLED` is off. One
+switch, no second way in.
+
+**What is stored is not the recording.** A `VoicePrint` holds a median pitch,
+two durations, and a long-term average log spectrum: a few hundred numbers,
+averaged over every speech frame, with no phase and no time axis. Nothing
+that was said can be recovered from it, because everything carrying what was
+said has been averaged away. That shape was chosen for three reasons and the
+privacy one came first: an enrolment recording is a vendor's voice, held
+indefinitely, in a service inside a payments flow, and that is biometric data
+whose liability grows with every vendor onboarded. The other two are that a
+print is about 1.6 KB against a quarter of a megabyte, and that the reference
+stops being re-measured on every speech segment of every call.
+
+The response says nothing about the voice either. Not the pitch, not the
+spectrum, not a similarity against anything: only how much voiced speech was
+found, how long the recording was, where it came from, and a quality verdict.
+`POST /enrol/voice/erase` removes a print, because the thing stored is
+derived from biometric data and a vendor may ask for it to be gone.
+
+A recording with nothing measurable in it is refused with a reason rather
+than stored. Storing it would leave an operator believing a vendor was
+covered while every comparison came back inconclusive. A recording with under
+1.5 s of voiced speech is stored and flagged `thin`, because it still catches
+a wildly different talker.
+
+**`replace` must be explicit.** Someone holding the service token cannot
+release a payment, since a human approves that. But overwriting a vendor's
+reference with their own voice would pass the heaviest signal in the model on
+every future call, silently, until somebody re-enrolled that vendor. So a
+second enrolment for an identity is a 409 unless the request asks to replace.
+
+**A full store refuses rather than evicting.** The session store evicts
+because sessions are transient; enrolments are not. Evicting one would
+quietly remove a signal from some other vendor's next call. Refusing fails in
+front of the operator onboarding right now, who can raise
+`CALLBACK_ENROLMENT_MAX_IDENTITIES`.
+
+**Identity is matched byte for byte** after trimming whitespace. No case
+folding, no unicode normalisation. Canonicalising would trade a missed lookup
+for a possible collision, and those are not the same size: a missed lookup
+leaves `voice_match` unrun and denies more often, while a collision compares
+one vendor against another vendor's voice.
+
+By default prints live in process memory and a restart loses them all. Set
+`CALLBACK_ENROLMENT_DICT_NAME` to keep them in a `modal.Dict` across deploys
+and replicas.
+
+### What this does not do
+
+It is not speaker verification. `detector/analysis/voice.py` says so at the
+top and the `detail` string says so on every passing comparison. Two adults of
+the same sex with similar pitch will match here even if a listener could tell
+them apart instantly. What it reliably catches is an obviously different
+talker, which is the `human_impostor` attack and the second row of the table
+above. What it cannot do is confirm identity, so a passing `voice_match` is
+evidence that nothing is obviously wrong and not evidence that the caller is
+the vendor.
+
+### Why a synthesiser is challenged rather than denied
+
+Fourth row of the table: enrolling the vendor moves the synthesiser from
+`deny 0.59` to `challenge 0.35`. Nothing about the synthesiser changed. What
+changed is that `voice_match` now runs, passes, and carries 0.35 of the
+weight, so the two failing signals are a smaller share of the total.
+
+A clone of the vendor's voice is supposed to match on `voice_match`. That is
+not the detector being fooled, it is the factor answering its own question
+correctly, and this product has said so from the start: the `cloned_voice`
+scenario in `detector/mock.py` scores `voice_match` 0.88 PASS with the note
+"Embedding matches, which a high-quality clone is expected to do", fails
+`synthetic_speech`, and gives a reason ending "Step-up required" with
+`otp_can_rescue` true. Real mode now agrees with that policy. The old deny
+was an artefact of `voice_match` never running, which inflated every
+real-mode risk score by removing a passing factor from the renormalisation.
+
+So what catches a clone is the one-time code sent to the number on the oldest
+invoice, not the blended score. Whether a cloned voice should instead be
+unrescuable, as `replay` and `agent_behaviour` are, is a product decision and
+is not made in the code.
+
+The replay row is the other half of the same machinery and is worth
+understanding because three separate rules have to hold for it:
+
+* the replay scores 0.12, **above** the 0.10 fatal line, so the fatal rule
+  does not fire;
+* the blend lands at 0.17, **below** the 0.30 allow threshold, so the blend
+  would allow it;
+* `first_failing_factor` blocks the allow, and `replay` being in
+  `UNRESCUABLE` means no step-up is offered, so the middle band falls to deny.
+
+Remove any one of those and a replayed recording is allowed or merely
+challenged.
 
 ## Testing against a deployment
 
@@ -281,8 +559,9 @@ to have them enforced from the first byte.
 
 ## Configuration
 
-See `.env.example`. `CALLBACK_API_TOKEN` is the only value with no usable
-default.
+See `.env.example`. `DETECTOR_TOKEN` is the only value with no usable
+default; `/v1` also needs a user directory (`USERS_ON_FILE_PATH` or
+`USERS_ON_FILE_JSON`) to identify anyone.
 
 ## GPU
 

@@ -1,0 +1,177 @@
+{
+ "sessions": [
+  {
+   "session_id": "ses_e56fd040251b316b93dbfea886594982",
+   "created_at": "2026-11-08T05:36:52.389379+00:00",
+   "updated_at": "2026-11-08T05:36:52.641880+00:00",
+   "scenario": "real_cfo",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": null,
+   "last_action": null,
+   "last_reasons": [],
+   "locked": false,
+   "ended": true
+  },
+  {
+   "session_id": "ses_acca4916b31ef18794d12a872f400e80",
+   "created_at": "2026-11-08T05:36:43.231901+00:00",
+   "updated_at": "2026-11-08T05:36:51.821541+00:00",
+   "scenario": "real_cfo",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": null,
+   "last_action": null,
+   "last_reasons": [],
+   "locked": false,
+   "ended": true
+  },
+  {
+   "session_id": "ses_42f17f1a89bf5b1deaba0d3c4892252a",
+   "created_at": "2026-11-08T05:36:40.575166+00:00",
+   "updated_at": "2026-11-08T05:36:42.769445+00:00",
+   "scenario": "human_impostor",
+   "claimed_user_id": "u_eric",
+   "channel": "browser",
+   "last_decision": "deny",
+   "last_action": "list_vendor_accounts",
+   "last_reasons": [
+    "speaker_mismatch",
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_2bd4563c1bdcc65eba365b9fc7afa7f0",
+   "created_at": "2026-11-08T05:36:37.980788+00:00",
+   "updated_at": "2026-11-08T05:36:40.008229+00:00",
+   "scenario": "human_impostor",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": "deny",
+   "last_action": "update_vendor_bank_account",
+   "last_reasons": [
+    "speaker_mismatch",
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_3413177a68ca95246ae1d9061a2eb580",
+   "created_at": "2026-11-08T05:36:36.620981+00:00",
+   "updated_at": "2026-11-08T05:36:37.244867+00:00",
+   "scenario": "ai_agent",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": "deny",
+   "last_action": "update_vendor_bank_account",
+   "last_reasons": [
+    "automated_caller",
+    "voiceprint_pass 0.70\u22650.62",
+    "spoof_high 0.85",
+    "text_mid 0.40",
+    "agent_likelihood 0.90"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_3660173e1a777904c76c52ffff047fd7",
+   "created_at": "2026-11-08T05:36:34.095532+00:00",
+   "updated_at": "2026-11-08T05:36:35.879135+00:00",
+   "scenario": "replay",
+   "claimed_user_id": "u_eric",
+   "channel": "browser",
+   "last_decision": "deny",
+   "last_action": "list_vendor_accounts",
+   "last_reasons": [
+    "challenge_failed_replay",
+    "phrase_match false",
+    "voiceprint_pass 0.80\u22650.62",
+    "spoof_mid 0.45",
+    "text_low 0.20"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_688ba7e812d9555f4ad90e4af28b26fc",
+   "created_at": "2026-11-08T05:36:31.477322+00:00",
+   "updated_at": "2026-11-08T05:36:33.544564+00:00",
+   "scenario": "replay",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": "deny",
+   "last_action": "update_vendor_bank_account",
+   "last_reasons": [
+    "challenge_failed_replay",
+    "phrase_match false",
+    "voiceprint_pass 0.80\u22650.62",
+    "spoof_mid 0.45",
+    "text_low 0.20"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_be439b8fe8c87fe31f0fa3fc9c395b91",
+   "created_at": "2026-11-08T05:36:23.741166+00:00",
+   "updated_at": "2026-11-08T05:36:30.929340+00:00",
+   "scenario": "cloned_voice",
+   "claimed_user_id": "u_eric",
+   "channel": "browser",
+   "last_decision": "deny",
+   "last_action": "list_vendor_accounts",
+   "last_reasons": [
+    "synthetic_speech",
+    "voiceprint_pass 0.78\u22650.62",
+    "spoof_high 0.92",
+    "text_low 0.20"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_1d0862a050afd39efe7446590e16f31d",
+   "created_at": "2026-11-08T05:36:15.106678+00:00",
+   "updated_at": "2026-11-08T05:36:23.143368+00:00",
+   "scenario": "cloned_voice",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": "deny",
+   "last_action": "update_vendor_bank_account",
+   "last_reasons": [
+    "session_locked",
+    "synthetic_speech",
+    "voiceprint_pass 0.78\u22650.62",
+    "spoof_high 0.92",
+    "text_low 0.20"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "ses_f837c5514f1e252cccd1d812c26a0bd3",
+   "created_at": "2026-11-08T05:36:09.424168+00:00",
+   "updated_at": "2026-11-08T05:36:14.436787+00:00",
+   "scenario": "real_cfo",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": "allow",
+   "last_action": "hold_vendor",
+   "last_reasons": [
+    "tier0_hold"
+   ],
+   "locked": false,
+   "ended": true
+  }
+ ]
+}

@@ -28,21 +28,33 @@ than the arithmetic suggests. The weights were chosen with that in mind
 is the first thing to revisit once real attack audio exists to calibrate
 against.
 
-A GAP WORTH KNOWING ABOUT BEFORE WIRING THIS IN
------------------------------------------------
+WHAT RENORMALISATION DOES TO A SINGLE FAILING SIGNAL
+----------------------------------------------------
 `detector.scoring.blend_risk` renormalises over the factors that ran, and
-`decide` allows below a blended risk of 0.30. With no enrolment reference and
-no turn-taking metadata, only three factors run and `replay` carries 0.30 of
-the renormalised weight. A replay score anywhere above about 0.10 therefore
-cannot by itself push the blend past the allow threshold, so a detector that
-says `fail` at, say, 0.20 still ends in `allow`.
+`decide` allows below a blended risk of 0.30. So the fewer detectors run, the
+more each one is worth, and a failing signal can be either amplified or
+diluted depending on what else ran. Both directions are live:
 
-On the synthetic corpus every replay fixture reaches the fatal band and is
-denied, so this does not bite today. It would bite on a weaker replay, where
-only two of the four independent cues fire and the score is floored at 0.12.
-Two cheap mitigations, both outside this package: have the agent always send
-`turn_latencies_ms` so `agent_behaviour` runs, and treat a `fail` verdict on
-any factor as at least a challenge regardless of the blend.
+With no reference voice and no turn-taking metadata only three factors run,
+`replay` carries 0.30 of the renormalised weight, and a replay score above
+about 0.10 still cannot push the blend past the allow threshold on its own.
+Worse, `voice_match` not running also removed the *failing* case: a different
+talker reading the attacker's script passes synthesis, replay and liveness,
+so with nothing enrolled that call blends to 0.05 and is allowed.
+
+With a reference voice all four audio factors run, `voice_match` carries 0.35,
+and a clone that matches it dilutes the signals that caught the synthesis. A
+synthesiser that denied at 0.59 on three factors challenges at 0.35 on four.
+That one is intended: see `detector.mock`'s `cloned_voice` scenario, which has
+always scored `voice_match` as a pass and called for a step-up.
+
+What keeps all of this safe is not the blend. It is that
+`detector.scoring.first_failing_factor` refuses to let any `fail` verdict
+become an allow, and that `detector.evidence.UNRESCUABLE` withholds the
+step-up for `replay` and `agent_behaviour`, which drops the middle band to
+deny. The remaining cheap mitigation, outside this package: have the agent
+always send `turn_latencies_ms` so `agent_behaviour` runs too and the weights
+stop being renormalised at all.
 
 FAILURE POLICY
 --------------
@@ -60,11 +72,12 @@ from dataclasses import dataclass, field
 
 from detector.analysis.behaviour import CallMetadata, analyse_behaviour
 from detector.analysis.cues import DetectorResult, not_run
-from detector.analysis.dsp import DEFAULT_GRID, AudioContext, FrameGrid, build_context
+from detector.analysis.dsp import DEFAULT_GRID, FrameGrid, build_context
 from detector.analysis.liveness import analyse_liveness
 from detector.analysis.replay import analyse_replay
 from detector.analysis.synthesis import analyse_synthesis
 from detector.analysis.voice import analyse_voice_match
+from detector.analysis.voiceprint import VoicePrint, voiceprint_from
 from shared.contract import Factor, FactorName, FactorVerdict
 
 __all__ = [
@@ -159,6 +172,7 @@ class AnalysisEngine:
         sample_rate: int,
         *,
         metadata: CallMetadata | None = None,
+        reference: VoicePrint | None = None,
         reference_audio: object | None = None,
         reference_sample_rate: int | None = None,
     ) -> list[Factor]:
@@ -170,8 +184,11 @@ class AnalysisEngine:
         `metadata` carries the agent's turn-taking timings. Without it the
         `agent_behaviour` factor is `not_run` rather than guessed.
 
-        `reference_audio` is an enrolment recording of the claimed identity.
-        Without it the `voice_match` factor is `not_run`.
+        `reference` is the enrolled voice print of the claimed identity, which
+        is what the service holds; `reference_audio` is an enrolment recording
+        to extract one from on the spot, which is what the calibration harness
+        and the tests hand over. `reference` wins if both arrive. Without
+        either, the `voice_match` factor is `not_run`.
 
         Returns the five audio and behaviour factors in `FACTOR_ORDER`, ready
         for `detector.scoring`. Never raises on degenerate audio.
@@ -181,6 +198,7 @@ class AnalysisEngine:
             audio,
             sample_rate,
             metadata=metadata,
+            reference=reference,
             reference_audio=reference_audio,
             reference_sample_rate=reference_sample_rate,
         ).factors
@@ -191,6 +209,7 @@ class AnalysisEngine:
         sample_rate: int,
         *,
         metadata: CallMetadata | None = None,
+        reference: VoicePrint | None = None,
         reference_audio: object | None = None,
         reference_sample_rate: int | None = None,
     ) -> AnalysisReport:
@@ -199,15 +218,19 @@ class AnalysisEngine:
         started = time.perf_counter()
         ctx = build_context(audio, sample_rate, self._grid)
 
-        reference_ctx: AudioContext | None = None
-        if reference_audio is not None:
-            reference_ctx = build_context(
-                reference_audio, reference_sample_rate or sample_rate, self._grid
+        reference_print = reference
+        if reference_print is None and reference_audio is not None:
+            # Extracting here costs a full context build per call, which is why
+            # the service stores the print instead and passes `reference`.
+            reference_print = voiceprint_from(
+                build_context(
+                    reference_audio, reference_sample_rate or sample_rate, self._grid
+                )
             )
 
         results: dict[FactorName, DetectorResult] = {
             FactorName.VOICE_MATCH: _guard(
-                "voice_match", lambda: analyse_voice_match(ctx, reference_ctx)
+                "voice_match", lambda: analyse_voice_match(ctx, reference_print)
             ),
             FactorName.SYNTHETIC_SPEECH: _guard(
                 "synthetic_speech", lambda: analyse_synthesis(ctx)
@@ -275,6 +298,7 @@ def analyse_call(
     sample_rate: int,
     *,
     metadata: CallMetadata | None = None,
+    reference: VoicePrint | None = None,
     reference_audio: object | None = None,
     reference_sample_rate: int | None = None,
 ) -> list[Factor]:
@@ -284,6 +308,7 @@ def analyse_call(
         audio,
         sample_rate,
         metadata=metadata,
+        reference=reference,
         reference_audio=reference_audio,
         reference_sample_rate=reference_sample_rate,
     )

@@ -99,6 +99,9 @@ from detector.observability import (
     metrics_router,
 )
 from detector.state import DetectorEngine, Session
+from detector.v1 import review_view as v1_review
+from detector.v1.review_view import V1SessionDetail, V1SessionList
+from detector.v1.service import V1Service
 from shared.contract import (
     CONTRACT_VERSION,
     MOCK_OTP_CODE,
@@ -1791,17 +1794,51 @@ def unauthorized_handler(realm: str):
     return handle
 
 
+def _v1_not_found(session_id: str) -> JSONResponse:
+    """The review surface's 404, for a /v1 session id."""
+
+    body = ErrorResponse(
+        error=ErrorBody(
+            code=ErrorCode.SESSION_NOT_FOUND,
+            message=f"no /v1 session {session_id!r}",
+            detail=(
+                "The /v1 registry has no record of this session. Ended "
+                "sessions are evicted an hour after they end."
+            ),
+        )
+    )
+    return JSONResponse(status_code=404, content=body.model_dump(mode="json"))
+
+
 def review_router(
     *,
     builder: EvidenceBuilder,
     observability: Observability,
     auth: TokenAuth,
     prefix: str = DEFAULT_REVIEW_PREFIX,
+    v1: V1Service | None = None,
 ) -> APIRouter:
     """Every human-facing route. All of them require the token."""
 
     guard = Depends(auth.browser_dependency())
     router = APIRouter(prefix=prefix, tags=["review"], dependencies=[guard])
+
+    if v1 is not None:
+        # A read-only view of the /v1 registry, so calls made over the agent
+        # contract show up for a reviewer. Outside the wire contract: the
+        # agent never calls these. See detector/v1/review_view.py for what
+        # they never return.
+
+        @router.get("/api/v1/sessions", response_model=V1SessionList)
+        async def v1_sessions() -> V1SessionList:
+            return v1_review.list_sessions(v1)
+
+        @router.get("/api/v1/sessions/{session_id}", response_model=V1SessionDetail)
+        async def v1_session(session_id: str) -> Any:
+            found = v1_review.detail(v1, session_id)
+            if found is None:
+                return _v1_not_found(session_id)
+            return found
 
     @router.get("", response_class=HTMLResponse, include_in_schema=False)
     async def dashboard() -> HTMLResponse:
@@ -1874,6 +1911,7 @@ def mount(
     observability: Observability | None = None,
     prefix: str = DEFAULT_REVIEW_PREFIX,
     stream: Any = None,
+    v1: V1Service | None = None,
 ) -> Observability:
     """Install logging, metrics and the review surface on `app`.
 
@@ -1915,6 +1953,8 @@ def mount(
             f"{clean_prefix}/api/sessions/{{session_id}}",
             f"{clean_prefix}/api/sessions/{{session_id}}/text",
             media_route,
+            f"{clean_prefix}/api/v1/sessions",
+            f"{clean_prefix}/api/v1/sessions/{{session_id}}",
         ]
     )
     obs.bind_active_sessions(lambda: float(len(engine.store)))
@@ -1934,7 +1974,11 @@ def mount(
     app.include_router(metrics_router(obs, auth))
     app.include_router(
         review_router(
-            builder=builder, observability=obs, auth=auth, prefix=clean_prefix
+            builder=builder,
+            observability=obs,
+            auth=auth,
+            prefix=clean_prefix,
+            v1=v1,
         )
     )
     app.add_middleware(ObservabilityMiddleware, observability=obs)
