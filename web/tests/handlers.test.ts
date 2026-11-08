@@ -54,11 +54,13 @@ describe("route handler errors never look like an allow", () => {
     const res = await handleList(
       source(async (_u, init) => {
         auth = (init?.headers as Record<string, string>).Authorization;
-        return Response.json({ count: 1, sessions: [{ claimed_user_id: "4155550123" }] });
+        return Response.json({ sessions: [{ session_id: "sess-1", created_at: "2026-11-08T18:00:00Z", claimed_user_id: "4155550123" }] });
       }),
     );
     expect(auth).toBe("Bearer secret-token");
-    expect(JSON.stringify(await res.json())).not.toMatch(/\d{5}/);
+    const body = await res.json();
+    expect(body.sessions[0].who).toBeTruthy();
+    expect(JSON.stringify(body)).not.toMatch(/\d{5}/);
   });
   it("rejects path-like session ids", async () => {
     const res = await handleGet("../etc/passwd", source(async () => Response.json({})));

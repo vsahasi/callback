@@ -1,0 +1,139 @@
+{
+ "session_id": "sess-demo-impostor",
+ "created_at": "2026-11-08T18:19:00.000000Z",
+ "updated_at": "2026-11-08T18:19:24.000000Z",
+ "scenario": "human_impostor",
+ "claimed_user_id": "u_marcus",
+ "channel": "phone",
+ "last_decision": "deny",
+ "last_action": "update_vendor_bank_account",
+ "last_reasons": [
+  "speaker_mismatch",
+  "voiceprint_fail 0.29<0.45",
+  "spoof_low 0.05",
+  "text_high 0.80",
+  "text_flags: urgency, verification_refusal"
+ ],
+ "locked": true,
+ "ended": true,
+ "decisions": [
+  {
+   "at": "2026-11-08T18:19:05.000000Z",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "step_up",
+   "reasons": [
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "required_factors": [
+    "voice_challenge",
+    "sms_otp",
+    "callback_on_file"
+   ],
+   "ttl_s": 120,
+   "idempotency_key": "000000000000000000000000000000000000000000000000000000000002899b",
+   "signals": {
+    "voiceprint": {
+     "score": 0.29,
+     "threshold": 0.62,
+     "passed": false,
+     "phrase_match": null
+    },
+    "deepfake": {
+     "spoof_prob": 0.05,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.8,
+     "flags": [
+      {
+       "type": "urgency",
+       "evidence": ""
+      },
+      {
+       "type": "verification_refusal",
+       "evidence": ""
+      }
+     ]
+    },
+    "agent_likelihood": 0.05,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T18:19:21.000000Z",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "deny",
+   "reasons": [
+    "speaker_mismatch",
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "000000000000000000000000000000000000000000000000000000000002a88a",
+   "signals": {
+    "voiceprint": {
+     "score": 0.29,
+     "threshold": 0.62,
+     "passed": false,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.05,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.8,
+     "flags": [
+      {
+       "type": "urgency",
+       "evidence": ""
+      },
+      {
+       "type": "verification_refusal",
+       "evidence": ""
+      }
+     ]
+    },
+    "agent_likelihood": 0.05,
+    "otp": "n/a"
+   }
+  }
+ ],
+ "challenges": [
+  {
+   "challenge_id": "ch-imp-1",
+   "kind": "phrase",
+   "status": "failed",
+   "phrase_match": true,
+   "speaker_score": 0.29,
+   "reason": "speaker_mismatch",
+   "issued_at": "2026-11-08T18:19:08.000000Z",
+   "resolved_at": "2026-11-08T18:19:19.000000Z"
+  }
+ ],
+ "otp": {
+  "sent": false,
+  "sent_to_last_four": null,
+  "attempts": 0,
+  "verified": false
+ },
+ "factors": [],
+ "events": [
+  {
+   "type": "agent_speech_start",
+   "at": "2026-11-08T18:19:02.000000Z"
+  },
+  {
+   "type": "user_speech_start",
+   "at": "2026-11-08T18:19:04.000000Z"
+  }
+ ]
+}

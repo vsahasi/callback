@@ -1,0 +1,58 @@
+{
+ "sessions": [
+  {
+   "session_id": "sess-demo-impostor",
+   "created_at": "2026-11-08T18:19:00.000000Z",
+   "updated_at": "2026-11-08T18:19:24.000000Z",
+   "scenario": "human_impostor",
+   "claimed_user_id": "u_marcus",
+   "channel": "phone",
+   "last_decision": "deny",
+   "last_action": "update_vendor_bank_account",
+   "last_reasons": [
+    "speaker_mismatch",
+    "voiceprint_fail 0.29<0.45",
+    "spoof_low 0.05",
+    "text_high 0.80",
+    "text_flags: urgency, verification_refusal"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "sess-demo-cloned",
+   "created_at": "2026-11-08T18:14:00.000000Z",
+   "updated_at": "2026-11-08T18:14:12.000000Z",
+   "scenario": "cloned_voice",
+   "claimed_user_id": "u_priya",
+   "channel": "phone",
+   "last_decision": "deny",
+   "last_action": "update_vendor_bank_account",
+   "last_reasons": [
+    "synthetic_speech",
+    "voiceprint_pass 0.78\u22650.62",
+    "spoof_high 0.92",
+    "text_low 0.20"
+   ],
+   "locked": true,
+   "ended": true
+  },
+  {
+   "session_id": "sess-demo-real-cfo",
+   "created_at": "2026-11-08T18:10:00.000000Z",
+   "updated_at": "2026-11-08T18:11:41.000000Z",
+   "scenario": "real_cfo",
+   "claimed_user_id": "u_eric",
+   "channel": "phone",
+   "last_decision": "allow",
+   "last_action": "list_vendor_accounts",
+   "last_reasons": [
+    "voiceprint_pass 0.83\u22650.62",
+    "spoof_low 0.04",
+    "text_low 0.10"
+   ],
+   "locked": false,
+   "ended": true
+  }
+ ]
+}

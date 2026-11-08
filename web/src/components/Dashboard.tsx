@@ -2,20 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePolling } from "@/lib/usePolling";
-import type { EvidenceBundle, SessionList } from "@/lib/types";
+import type { CallView, ListView } from "@/lib/view";
 import { SessionRail } from "./SessionRail";
-import { Detail } from "./Detail";
+import { CallDetail } from "./CallDetail";
 import { ErrorPanel, Notice } from "./States";
 
 export function Dashboard() {
-  const list = usePolling<SessionList>("/api/sessions");
+  const list = usePolling<ListView>("/api/sessions");
   const [picked, setPicked] = useState<string | null>(null);
   const [theme, setTheme] = useState<"light" | "dark" | null>(null);
 
   const sessions = useMemo(
     () =>
       [...(list.data?.sessions ?? [])].sort(
-        (a, b) => Date.parse(b.first_seen) - Date.parse(a.first_seen),
+        (a, b) => Date.parse(b.at) - Date.parse(a.at),
       ),
     [list.data],
   );
@@ -23,7 +23,7 @@ export function Dashboard() {
   const following = picked === null;
   const selected = picked ?? newest;
 
-  const detail = usePolling<EvidenceBundle>(
+  const detail = usePolling<CallView>(
     selected ? `/api/sessions/${encodeURIComponent(selected)}` : null,
   );
 
@@ -56,11 +56,18 @@ export function Dashboard() {
           <span className="sub">caller verification</span>
         </div>
         <div className="top-right">
-          {list.fixtures && <span className="chip chip-warn">SAMPLE DATA</span>}
-          {detail.data?.mock_mode && !list.fixtures && <span className="chip">MOCK DETECTOR</span>}
-          <span className={`live ${list.error ? "live-bad" : ""}`}>
-            <i /> {list.error ? "NOT LIVE" : "LIVE"}
-          </span>
+          {list.fixtures ? (
+            <span className="chip chip-warn">SAMPLE DATA</span>
+          ) : (
+            <>
+              {detail.data?.kind === "events" && detail.data.bundle.mock_mode && (
+                <span className="chip">MOCK DETECTOR</span>
+              )}
+              <span className={`live ${list.error ? "live-bad" : ""}`}>
+                <i /> {list.error ? "NOT LIVE" : "LIVE"}
+              </span>
+            </>
+          )}
           <button className="btn" onClick={toggleTheme} aria-label="Toggle light and dark theme">
             Theme
           </button>
@@ -96,8 +103,8 @@ export function Dashboard() {
         ) : !detail.data ? (
           <div className="state">Loading call...</div>
         ) : (
-          <Detail
-            b={detail.data}
+          <CallDetail
+            view={detail.data}
             stale={Boolean(detail.error)}
             following={following}
             onFollow={() => setPicked(null)}

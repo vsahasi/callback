@@ -1,8 +1,9 @@
-import type { ApiError, SessionSummary } from "@/lib/types";
-import { DECISION_GLYPH, DECISION_LABEL, decisionKind, pct, time } from "@/lib/format";
+import type { ApiError } from "@/lib/types";
+import type { Row } from "@/lib/view";
+import { DECISION_GLYPH, decisionKind, decisionLabel, pct, time } from "@/lib/format";
 
 interface Props {
-  sessions: SessionSummary[];
+  sessions: Row[];
   selected: string | null;
   following: boolean;
   loading: boolean;
@@ -32,14 +33,16 @@ export function SessionRail({ sessions, selected, following, loading, error, onP
                 aria-current={s.session_id === selected}
               >
                 <span className="badge">
-                  <b aria-hidden>{DECISION_GLYPH[k]}</b> {DECISION_LABEL[k]}
+                  <b aria-hidden>{DECISION_GLYPH[k]}</b> {decisionLabel(s.decision)}
                 </span>
-                <span className="who">{s.claimed_user_id ?? "unknown caller"}</span>
+                <span className="who">{s.who ?? "unknown caller"}</span>
                 <span className="meta">
-                  {time(s.first_seen)}
+                  {time(s.at)}
                   {i === 0 && <em>newest</em>}
                 </span>
-                <span className="risk">{pct(s.risk_score)}</span>
+                <span className="risk">
+                  {s.risk !== null ? pct(s.risk) : s.locked ? "LOCKED" : ""}
+                </span>
               </button>
             </li>
           );

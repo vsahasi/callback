@@ -1,14 +1,19 @@
 // The one place the dashboard gets data from. Everything else imports
 // `getSource()`. A Supabase source can be added by implementing
 // `DetectorSource` and returning it from `getSource()`.
+//
+// Sources: "v1" (default) reads /review/api/v1, "events" reads the older
+// /review/api. DASHBOARD_SOURCE=events selects the old one.
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ErrorKind, EvidenceBundle, SessionList } from "./types";
+import type { CallView, ListView } from "./view";
+import { mapV1Detail, mapV1List } from "./v1";
 
 export interface DetectorSource {
-  listSessions(): Promise<SessionList>;
-  getSession(id: string): Promise<EvidenceBundle>;
+  listSessions(): Promise<ListView>;
+  getSession(id: string): Promise<CallView>;
 }
 
 export class SourceError extends Error {
@@ -28,14 +33,29 @@ export function assertSafeId(id: string): void {
   if (!SAFE_ID.test(id)) throw new SourceError("not_found", "Unknown session.", 404);
 }
 
-class DetectorHttpSource implements DetectorSource {
+type Env = Record<string, string | undefined>;
+
+function eventsList(l: SessionList): ListView {
+  return {
+    sessions: (l.sessions ?? []).map((s) => ({
+      session_id: s.session_id,
+      decision: s.decision,
+      who: s.claimed_user_id,
+      at: s.first_seen,
+      risk: s.risk_score,
+    })),
+  };
+}
+
+/** Fetches JSON from the detector with the bearer token. Every failure is a SourceError. */
+class Detector {
   constructor(
     private base: string,
     private token: string,
     private fetchImpl: typeof fetch = fetch,
   ) {}
 
-  private async get<T>(pathname: string): Promise<T> {
+  async get(pathname: string): Promise<unknown> {
     let res: Response;
     try {
       res = await this.fetchImpl(this.base.replace(/\/+$/, "") + pathname, {
@@ -52,52 +72,87 @@ class DetectorHttpSource implements DetectorSource {
     if (res.status === 401 || res.status === 403)
       throw new SourceError("auth", "The detector rejected the dashboard's token.", 502);
     if (res.status === 404) throw new SourceError("not_found", "Unknown session.", 404);
-    if (!res.ok)
-      throw new SourceError("bad_response", `The detector answered ${res.status}.`, 502);
+    if (!res.ok) throw new SourceError("bad_response", `The detector answered ${res.status}.`, 502);
     try {
-      return (await res.json()) as T;
+      return await res.json();
     } catch {
       throw new SourceError("bad_response", "The detector sent an unreadable answer.", 502);
     }
   }
-
-  listSessions() {
-    return this.get<SessionList>("/review/api/sessions");
-  }
-  getSession(id: string) {
-    assertSafeId(id);
-    return this.get<EvidenceBundle>(`/review/api/sessions/${encodeURIComponent(id)}`);
-  }
 }
 
-class FixtureSource implements DetectorSource {
-  private dir = path.join(process.cwd(), "fixtures");
+const unreadable = () => new SourceError("bad_response", "The detector sent something unreadable.", 502);
 
+class V1HttpSource implements DetectorSource {
+  constructor(private d: Detector) {}
   async listSessions() {
-    return JSON.parse(await readFile(path.join(this.dir, "sessions.json"), "utf8")) as SessionList;
+    const raw = await this.d.get("/review/api/v1/sessions");
+    if (!raw || typeof raw !== "object" || !Array.isArray((raw as { sessions?: unknown }).sessions))
+      throw unreadable();
+    return mapV1List(raw);
   }
   async getSession(id: string) {
     assertSafeId(id);
-    try {
-      return JSON.parse(
-        await readFile(path.join(this.dir, "sessions", `${id}.json`), "utf8"),
-      ) as EvidenceBundle;
-    } catch {
-      throw new SourceError("not_found", "Unknown session.", 404);
-    }
+    const view = mapV1Detail(await this.d.get(`/review/api/v1/sessions/${encodeURIComponent(id)}`));
+    if (!view) throw unreadable();
+    return view;
   }
 }
 
-export function usingFixtures(env: Record<string, string | undefined> = process.env): boolean {
+class EventsHttpSource implements DetectorSource {
+  constructor(private d: Detector) {}
+  async listSessions() {
+    return eventsList((await this.d.get("/review/api/sessions")) as SessionList);
+  }
+  async getSession(id: string): Promise<CallView> {
+    assertSafeId(id);
+    const bundle = (await this.d.get(`/review/api/sessions/${encodeURIComponent(id)}`)) as EvidenceBundle;
+    if (!bundle || typeof bundle !== "object" || !bundle.session_id) throw unreadable();
+    return { kind: "events", bundle };
+  }
+}
+
+async function readJson(file: string): Promise<unknown> {
+  return JSON.parse(await readFile(file, "utf8"));
+}
+
+class FixtureSource implements DetectorSource {
+  constructor(private flavor: "v1" | "events") {}
+  private dir() {
+    const base = path.join(process.cwd(), "fixtures");
+    return this.flavor === "v1" ? path.join(base, "v1") : base;
+  }
+  async listSessions() {
+    const raw = await readJson(path.join(this.dir(), "sessions.json"));
+    return this.flavor === "v1" ? mapV1List(raw) : eventsList(raw as SessionList);
+  }
+  async getSession(id: string): Promise<CallView> {
+    assertSafeId(id);
+    let raw: unknown;
+    try {
+      raw = await readJson(path.join(this.dir(), "sessions", `${id}.json`));
+    } catch {
+      throw new SourceError("not_found", "Unknown session.", 404);
+    }
+    if (this.flavor === "events") return { kind: "events", bundle: raw as EvidenceBundle };
+    const view = mapV1Detail(raw);
+    if (!view) throw unreadable();
+    return view;
+  }
+}
+
+export function usingFixtures(env: Env = process.env): boolean {
   return env.DASHBOARD_FIXTURES === "1" || !env.DETECTOR_URL;
 }
 
-export function getSource(
-  env: Record<string, string | undefined> = process.env,
-  fetchImpl?: typeof fetch,
-): DetectorSource {
-  if (usingFixtures(env)) return new FixtureSource();
-  if (!env.DETECTOR_TOKEN)
-    throw new SourceError("unconfigured", "DETECTOR_TOKEN is not set.", 500);
-  return new DetectorHttpSource(env.DETECTOR_URL!, env.DETECTOR_TOKEN, fetchImpl);
+export function sourceFlavor(env: Env = process.env): "v1" | "events" {
+  return env.DASHBOARD_SOURCE === "events" ? "events" : "v1";
+}
+
+export function getSource(env: Env = process.env, fetchImpl?: typeof fetch): DetectorSource {
+  const flavor = sourceFlavor(env);
+  if (usingFixtures(env)) return new FixtureSource(flavor);
+  if (!env.DETECTOR_TOKEN) throw new SourceError("unconfigured", "DETECTOR_TOKEN is not set.", 500);
+  const d = new Detector(env.DETECTOR_URL!, env.DETECTOR_TOKEN, fetchImpl);
+  return flavor === "v1" ? new V1HttpSource(d) : new EventsHttpSource(d);
 }

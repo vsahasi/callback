@@ -11,6 +11,7 @@ route handlers, so the bearer token never reaches the browser.
 | --- | --- |
 | `DETECTOR_URL` | Detector base URL, for example `http://127.0.0.1:8000`. Empty serves fixtures. |
 | `DETECTOR_TOKEN` | The detector's `CALLBACK_API_TOKEN`. Server-side only. |
+| `DASHBOARD_SOURCE` | Empty or `v1` reads `/review/api/v1/sessions`. `events` reads the older `/review/api/sessions`. |
 | `DASHBOARD_FIXTURES` | `1` forces recorded sample data even when `DETECTOR_URL` is set. |
 
 Copy `.env.example` to `.env.local` and fill it in. Never commit real values.
@@ -32,16 +33,22 @@ npm install
 DETECTOR_URL=http://127.0.0.1:8137 DETECTOR_TOKEN=kit-test npm run dev
 ```
 
-Open http://localhost:3000. The page polls every 1.5 s and follows the newest
+Open http://localhost:3000. The v1 detector needs the review endpoints `/review/api/v1/sessions` and
+`/review/api/v1/sessions/{id}`. The page polls every 1.5 s and follows the newest
 call until you click an older one. Click the newest call, or "Jump to the
 newest", to follow again.
 
 ## Fixture mode
 
-With `DASHBOARD_FIXTURES=1` or no `DETECTOR_URL`, the routes serve the JSON in
-`fixtures/`, captured from the mock detector (real_cfo, cloned_voice with a
-correct code, cloned_voice with wrong codes, replay). The header shows
-SAMPLE DATA. Nothing else needs to run.
+With `DASHBOARD_FIXTURES=1` or no `DETECTOR_URL`, the routes serve recorded
+JSON and the header shows SAMPLE DATA instead of LIVE. Nothing else needs to run.
+
+- `fixtures/v1/` is the default. It is hand-built from the v1 contract (a
+  real_cfo allow after step-up, a cloned_voice deny, a human_impostor deny with
+  a failed speaker challenge), not captured from a detector. Replace it with
+  captured responses once the detector's v1 review endpoints are running.
+- `fixtures/sessions.json` and `fixtures/sessions/` are captured from the mock
+  detector's older review API and are used with `DASHBOARD_SOURCE=events`.
 
 ## Failure behaviour
 

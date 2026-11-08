@@ -1,0 +1,232 @@
+{
+ "session_id": "sess-demo-real-cfo",
+ "created_at": "2026-11-08T18:10:00.000000Z",
+ "updated_at": "2026-11-08T18:11:41.000000Z",
+ "scenario": "real_cfo",
+ "claimed_user_id": "u_eric",
+ "channel": "phone",
+ "last_decision": "allow",
+ "last_action": "list_vendor_accounts",
+ "last_reasons": [
+  "voiceprint_pass 0.83\u22650.62",
+  "spoof_low 0.04",
+  "text_low 0.10"
+ ],
+ "locked": false,
+ "ended": true,
+ "decisions": [
+  {
+   "at": "2026-11-08T18:10:06.000000Z",
+   "action": "hold_vendor",
+   "tier": 0,
+   "decision": "allow",
+   "reasons": [
+    "tier0_hold"
+   ],
+   "required_factors": [],
+   "ttl_s": 0,
+   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000001eef",
+   "signals": {
+    "voiceprint": {
+     "score": 0.83,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": null
+    },
+    "deepfake": {
+     "spoof_prob": 0.04,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.1,
+     "flags": []
+    },
+    "agent_likelihood": 0.05,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T18:10:14.000000Z",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "step_up",
+   "reasons": [
+    "voiceprint_pass 0.83\u22650.62",
+    "spoof_low 0.04",
+    "text_low 0.10"
+   ],
+   "required_factors": [
+    "voice_challenge",
+    "sms_otp",
+    "callback_on_file"
+   ],
+   "ttl_s": 120,
+   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000003dde",
+   "signals": {
+    "voiceprint": {
+     "score": 0.83,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.04,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.1,
+     "flags": []
+    },
+    "agent_likelihood": 0.05,
+    "otp": "n/a"
+   }
+  },
+  {
+   "at": "2026-11-08T18:10:58.000000Z",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "step_up",
+   "reasons": [
+    "voiceprint_pass 0.83\u22650.62",
+    "spoof_low 0.04",
+    "text_low 0.10"
+   ],
+   "required_factors": [
+    "voice_challenge"
+   ],
+   "ttl_s": 120,
+   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000005ccd",
+   "signals": {
+    "voiceprint": {
+     "score": 0.83,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.04,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.1,
+     "flags": []
+    },
+    "agent_likelihood": 0.05,
+    "otp": "verified"
+   }
+  },
+  {
+   "at": "2026-11-08T18:11:21.000000Z",
+   "action": "update_vendor_bank_account",
+   "tier": 2,
+   "decision": "allow",
+   "reasons": [
+    "voiceprint_pass 0.83\u22650.62",
+    "spoof_low 0.04",
+    "text_low 0.10"
+   ],
+   "required_factors": [],
+   "ttl_s": 60,
+   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000007bbc",
+   "signals": {
+    "voiceprint": {
+     "score": 0.83,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.04,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.1,
+     "flags": []
+    },
+    "agent_likelihood": 0.05,
+    "otp": "verified"
+   }
+  },
+  {
+   "at": "2026-11-08T18:11:36.000000Z",
+   "action": "list_vendor_accounts",
+   "tier": 1,
+   "decision": "allow",
+   "reasons": [
+    "voiceprint_pass 0.83\u22650.62",
+    "spoof_low 0.04",
+    "text_low 0.10"
+   ],
+   "required_factors": [],
+   "ttl_s": 300,
+   "idempotency_key": "0000000000000000000000000000000000000000000000000000000000009aab",
+   "signals": {
+    "voiceprint": {
+     "score": 0.83,
+     "threshold": 0.62,
+     "passed": true,
+     "phrase_match": true
+    },
+    "deepfake": {
+     "spoof_prob": 0.04,
+     "windows": 8
+    },
+    "text": {
+     "risk": 0.1,
+     "flags": []
+    },
+    "agent_likelihood": 0.05,
+    "otp": "verified"
+   }
+  }
+ ],
+ "challenges": [
+  {
+   "challenge_id": "ch-real-1",
+   "kind": "phrase",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": 0.83,
+   "reason": null,
+   "issued_at": "2026-11-08T18:10:20.000000Z",
+   "resolved_at": "2026-11-08T18:10:31.000000Z"
+  },
+  {
+   "challenge_id": "ch-real-2",
+   "kind": "phrase",
+   "status": "passed",
+   "phrase_match": true,
+   "speaker_score": 0.83,
+   "reason": null,
+   "issued_at": "2026-11-08T18:11:02.000000Z",
+   "resolved_at": "2026-11-08T18:11:12.000000Z"
+  }
+ ],
+ "otp": {
+  "sent": true,
+  "sent_to_last_four": "0100",
+  "attempts": 1,
+  "verified": true
+ },
+ "factors": [
+  {
+   "kind": "callback",
+   "result": "confirmed",
+   "at": "2026-11-08T18:10:52.000000Z"
+  }
+ ],
+ "events": [
+  {
+   "type": "agent_speech_start",
+   "at": "2026-11-08T18:10:03.000000Z"
+  },
+  {
+   "type": "user_speech_start",
+   "at": "2026-11-08T18:10:09.000000Z"
+  },
+  {
+   "type": "agent_speech_end",
+   "at": "2026-11-08T18:10:12.000000Z"
+  }
+ ]
+}

@@ -20,7 +20,7 @@ export function maskDigits(text: string): string {
 
 // Keys whose string values are opaque identifiers or timestamps, which
 // legitimately contain digit runs and carry no caller data.
-const PASSTHROUGH_KEYS = new Set(["session_id", "request_id"]);
+const PASSTHROUGH_KEYS = new Set(["session_id", "request_id", "challenge_id", "idempotency_key"]);
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T[\d:.+Z-]+$/;
 
 /** Mask every string in a JSON value, except ids and timestamps. */
