@@ -62,7 +62,7 @@ from detector.pipeline import AudioPipeline
 from detector.review import mount as mount_review
 from detector.state import DetectorEngine
 from detector.v1 import build_v1_router
-from detector.v1.router import V1Service
+from detector.v1.service import V1Service
 from detector.verification import build_verification_router
 from shared.contract import (
     CONTRACT_VERSION,

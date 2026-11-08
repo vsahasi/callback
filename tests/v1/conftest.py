@@ -122,3 +122,52 @@ def v1_app(v1_settings: Settings, clock: FakeClock, log_stream: io.StringIO) -> 
 async def v1(v1_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     async with client_for(v1_app) as client:
         yield client
+
+
+# ------------------------------------------------------------- helpers
+
+
+def session_body(
+    room: str = "room-1",
+    caller_identity: str = "sip_caller",
+    claimed_user_id: str = "u_eric",
+    channel: str = "phone",
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "room": room,
+        "caller_identity": caller_identity,
+        "claimed_user_id": claimed_user_id,
+        "channel": channel,
+        **extra,
+    }
+
+
+async def create_session(
+    client: httpx.AsyncClient,
+    scenario: str | None = None,
+    **body: Any,
+) -> str:
+    headers = {"X-Callback-Scenario": scenario} if scenario is not None else None
+    response = await client.post(
+        "/v1/sessions", json=session_body(**body), headers=headers
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["session_id"]
+
+
+def turn_body(
+    clock: FakeClock,
+    text: str = "four seven two nine one three",
+    role: str = "user",
+    **extra: Any,
+) -> dict[str, Any]:
+    start = clock.ms()
+    return {
+        "role": role,
+        "text": text,
+        "start_ms": start,
+        "end_ms": start + 1200,
+        "words": [],
+        **extra,
+    }

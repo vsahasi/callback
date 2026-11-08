@@ -7,6 +7,7 @@ package's. tests/v1/test_imports.py holds that line.
 
 from __future__ import annotations
 
-from detector.v1.router import V1Service, build_v1_router
+from detector.v1.router import build_v1_router
+from detector.v1.service import V1Service
 
 __all__ = ["V1Service", "build_v1_router"]

@@ -4,15 +4,17 @@ Every route needs the bearer token and `X-Contract-Version` (auth first, then
 the version), and every response carries `X-Contract-Version: 1.1.0`, errors
 included. A non-2xx body is always callback_shared's `ErrorResponse`.
 
-The router holds all /v1 state through one `V1Service`, which create_app keeps
-on `app.state.v1`. Nothing here goes through the /events engine, the internal
-scoring or the /events mock scripts.
+The routes are thin. All /v1 state lives in one `V1Service`
+(detector/v1/service.py), which create_app keeps on `app.state.v1`. Nothing
+here goes through the /events engine, the internal scoring or the /events
+mock scripts.
+
+Mock jitter is slept on every route except /turns, /events and the challenge
+poll (ruling F4), so background turn posts never delay a challenge result.
 """
 
 from __future__ import annotations
 
-import asyncio
-import time
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
@@ -21,6 +23,13 @@ from callback_shared.contract import (
 )
 from callback_shared.contract import (
     CONTRACT_VERSION_HEADER,
+    SCENARIO_HEADER,
+    CallerUpdate,
+    FactorReport,
+    SessionCreate,
+    SessionCreated,
+    SpeechEvent,
+    Turn,
     UserOnFile,
     UserSummary,
 )
@@ -32,79 +41,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from detector.config import Settings
 from detector.enrolment import VoicePrintStore
 from detector.errors import DetectorError
-from detector.mock import jitter_seconds
-from detector.observability import StructuredLogger
 from detector.v1.errors import ContractVersionMismatch, InternalError, UserNotFound
+from detector.v1.service import V1Service
 from detector.v1.users import UserDirectory
 
 WIRE_MAJOR = WIRE_CONTRACT_VERSION.split(".", 1)[0]
 
-# Distinct version strings warned about, at most. Auth runs first, so only a
-# caller holding the token can add one, but the set is bounded anyway.
-_MAX_WARNED_VERSIONS = 32
 
-
-class V1Service:
-    """Every piece of /v1 state, in one process, in memory."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        *,
-        voiceprints: VoicePrintStore,
-        clock: Callable[[], float] | None = None,
-        directory: UserDirectory | None = None,
-    ) -> None:
-        self.settings = settings
-        self.clock: Callable[[], float] = clock or time.time
-        self.voiceprints = voiceprints
-        self.directory = (
-            directory
-            if directory is not None
-            else UserDirectory.from_settings(settings)
-        )
-        self.logger: StructuredLogger | None = None
-        self._warned_versions: set[str] = set()
-
-    # ------------------------------------------------------------ plumbing
-
-    def bind_logger(self, logger: StructuredLogger) -> None:
-        """create_app hands over the observability logger once it exists."""
-
-        self.logger = logger
-
-    def log(self, event: str, *, level: str = "info", **fields: Any) -> None:
-        # Callers pass ids, codes, counts and tags only. The structured
-        # logger's redactor is a second line, not the plan.
-        if self.logger is not None:
-            self.logger.log(event, level=level, **fields)
-
-    async def jitter(self) -> None:
-        """Mock-mode latency. Every route but turns, events and the poll."""
-
-        if not self.settings.mock_mode:
-            return
-        delay = jitter_seconds(
-            self.settings.mock_jitter_min_ms, self.settings.mock_jitter_max_ms
-        )
-        if delay > 0:
-            await asyncio.sleep(delay)
-
-    def warn_version_once(self, version: str) -> None:
-        if version in self._warned_versions:
-            return
-        if len(self._warned_versions) >= _MAX_WARNED_VERSIONS:
-            return
-        self._warned_versions.add(version)
-        self.log(
-            "v1_contract_version_differs",
-            level="warning",
-            presented=version[:32],
-            served=WIRE_CONTRACT_VERSION,
-        )
-
-    async def aclose(self) -> None:
-        return None
+def _no_content() -> Response:
+    return Response(status_code=204)
 
 
 def build_v1_router(
@@ -191,6 +136,49 @@ def build_v1_router(
         if user is None:
             raise UserNotFound()
         return user
+
+    # ---------------------------------------------------- 3-6: sessions
+
+    @router.post("/sessions", response_model=SessionCreated)
+    async def create_session(
+        body: SessionCreate,
+        x_callback_scenario: Annotated[
+            str | None, Header(alias=SCENARIO_HEADER)
+        ] = None,
+    ) -> SessionCreated:
+        # The only route that reads the scenario header.
+        await service.jitter()
+        return service.create_session(body, x_callback_scenario)
+
+    @router.post("/sessions/{session_id}/caller", status_code=204)
+    async def update_caller(session_id: str, body: CallerUpdate) -> Response:
+        await service.jitter()
+        service.update_caller(session_id, body)
+        return _no_content()
+
+    @router.post("/sessions/{session_id}/turns", status_code=204)
+    async def post_turn(session_id: str, body: Turn) -> Response:
+        service.add_turn(session_id, body)  # no jitter
+        return _no_content()
+
+    @router.post("/sessions/{session_id}/events", status_code=204)
+    async def post_event(session_id: str, body: SpeechEvent) -> Response:
+        service.add_event(session_id, body)  # no jitter
+        return _no_content()
+
+    # ------------------------------------------------ 12, 13: factors, end
+
+    @router.post("/sessions/{session_id}/factors", status_code=204)
+    async def report_factor(session_id: str, body: FactorReport) -> Response:
+        await service.jitter()
+        service.report_factor(session_id, body)
+        return _no_content()
+
+    @router.post("/sessions/{session_id}/end", status_code=204)
+    async def end_session(session_id: str) -> Response:
+        await service.jitter()
+        service.end_session(session_id)
+        return _no_content()
 
     router.service = service  # type: ignore[attr-defined]
     return router
