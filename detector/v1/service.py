@@ -392,9 +392,14 @@ class V1Service:
         if record.send_times and now - record.send_times[-1] < OTP_SEND_INTERVAL_S:
             raise OtpRateLimited(detail="at most 1 send per 30 s")
         phone = self._phone_on_file(session)
+        # Reserve the slot before awaiting the provider, so a second send that
+        # arrives while Twilio is answering sees it and is refused. A send that
+        # failed releases it: only a code that went out counts.
+        record.send_times.append(now)
         try:
             await self.otp.send(phone)
         except SmsFailed:
+            record.send_times.remove(now)
             self.log(
                 "v1_sms_failed",
                 level="warning",
@@ -402,8 +407,6 @@ class V1Service:
                 step="send",
             )
             raise
-        # Only a send that went out counts toward the limits.
-        record.send_times.append(now)
         self.log(
             "v1_otp_sent", session_id=session.session_id, sends=len(record.send_times)
         )

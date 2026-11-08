@@ -6,6 +6,7 @@ handed an httpx client whose transport is a local handler.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 from collections.abc import Callable
@@ -349,3 +350,44 @@ async def test_neither_the_code_nor_the_number_reaches_the_log(
     assert "v1_otp_checked" in text
     for needle in ("135792", "424242", "+15555550100", "5555550100"):
         assert needle not in text
+
+
+# ------------------------------------- M4: concurrent sends hold the limits
+
+
+async def test_concurrent_sends_cannot_beat_the_limits(clock: FakeClock) -> None:
+    sends: list[httpx.Request] = []
+
+    async def slow_twilio(request: httpx.Request) -> httpx.Response:
+        sends.append(request)
+        await asyncio.sleep(0.05)  # Twilio is answering
+        return httpx.Response(201, json={"status": "pending"})
+
+    app = build_app(base_settings(mock_mode=False, **TWILIO), clock, io.StringIO())
+    await app.state.v1.otp.aclose()
+    app.state.v1.otp = twilio_backend(slow_twilio)  # type: ignore[arg-type]
+    async with client_for(app) as client:
+        session_id = await create_session(client)
+        first, second = await asyncio.gather(
+            send(client, session_id), send(client, session_id)
+        )
+        assert sorted([first.status_code, second.status_code]) == [200, 429]
+        assert len(sends) == 1
+        # Three concurrent sends after the window: still only one goes out.
+        clock.advance(31)
+        results = await asyncio.gather(*(send(client, session_id) for _ in range(3)))
+        assert sorted(r.status_code for r in results) == [200, 429, 429]
+        assert len(sends) == 2
+
+
+async def test_a_failed_send_releases_its_slot(clock: FakeClock) -> None:
+    fake = FakeTwilio(httpx.Response(200, json={"status": "approved"}))
+    fake.send_answer = httpx.Response(500, json={})
+    app = await twilio_app(clock, fake, io.StringIO())
+    async with client_for(app) as client:
+        session_id = await create_session(client)
+        assert (await send(client, session_id)).status_code == 502
+        fake.send_answer = httpx.Response(201, json={"status": "pending"})
+        # No 30 s wait: the failed send did not keep its slot.
+        assert (await send(client, session_id)).status_code == 200
+        assert app.state.v1.registry.get(session_id).otp.send_times == [clock.now]
