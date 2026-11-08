@@ -27,14 +27,22 @@ Each step-up is an `AgentTask[T]` awaited from inside the gated tool. **Awaiting
 One default undermines the challenge flow. **`discard_audio_if_uninterruptible` is on, so STT receives silence while an uninterruptible prompt plays, and a caller turn that ends before playout ends is dropped before the hook runs** ([turn.py](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/livekit-agents/livekit/agents/voice/turn.py#L150-L198); [agent_activity.py](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/livekit-agents/livekit/agents/voice/agent_activity.py#L1693-L1712)). Eric's word check accepts answers that start up to 500 ms before the prompt ends, but those words never reach Flux, so a real CFO who starts repeating digits early fails the challenge. Phrase prompts as "after I finish, repeat all of it," or disable the discard on the challenge task and accept echo risk on speakerphones. Preemptive generation is also on by default ([turn.py](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/livekit-agents/livekit/agents/voice/turn.py#L201-L228)). Turn it off until the gate is proven, because nobody verified whether it can fire a tool call on an unfinished transcript. Ramp methods are never `@function_tool`s: the LLM sees one gated tool per action, and `generate_reply(tools=[...])` or `update_tools()` narrows the set further when risk rises ([agent_session.py](https://github.com/livekit/agents/blob/livekit-agents@1.8.10/livekit-agents/livekit/agents/voice/agent_session.py)). The sketch below assembles these verified APIs into the gate. It has not been run.
 
 ```python
-class VoiceChallenge(TimestampedSTT, AgentTask[str | None]):   # TimestampedSTT = the stt_node mixin
+class VoiceChallenge(
+    TimestampedSTT, AgentTask[str | None]
+):  # TimestampedSTT = the stt_node mixin
     def __init__(self, say: str, timeout: float = 30.0):
-        super().__init__(instructions="Verification step.", llm=None)   # no LLM inside the task
+        super().__init__(
+            instructions="Verification step.", llm=None
+        )  # no LLM inside the task
         self._say, self._timeout = say, timeout
 
     async def on_enter(self):
-        await self.session.say(self._say, allow_interruptions=False, add_to_chat_ctx=False)
-        asyncio.get_running_loop().call_later(self._timeout, self._expire)  # tasks have no timeout arg
+        await self.session.say(
+            self._say, allow_interruptions=False, add_to_chat_ctx=False
+        )
+        asyncio.get_running_loop().call_later(
+            self._timeout, self._expire
+        )  # tasks have no timeout arg
 
     def _expire(self):
         if not self.done():
@@ -43,27 +51,41 @@ class VoiceChallenge(TimestampedSTT, AgentTask[str | None]):   # TimestampedSTT 
     async def on_user_turn_completed(self, turn_ctx, new_message):
         if not self.done():
             self.complete(new_message.text_content)
-        raise StopResponse()                      # no reply; the answer never enters chat_ctx
+        raise StopResponse()  # no reply; the answer never enters chat_ctx
+
 
 class Callback(TimestampedSTT, Agent):
     @function_tool()
-    async def change_vendor_bank_account(self, ctx: RunContext[CallState], vendor_name: str) -> str:
+    async def change_vendor_bank_account(
+        self, ctx: RunContext[CallState], vendor_name: str
+    ) -> str:
         """Change where a vendor is paid. Always requires identity verification."""
         ctx.disallow_interruptions()
-        for attempt in range(4):                  # new idempotency key per attempt (see audit row 17)
+        for attempt in range(4):  # new idempotency key per attempt (see audit row 17)
             try:
-                async with ctx.with_filler("One moment while I verify that.", delay=0.5):
-                    d = await detector.authorize(ctx.userdata, "update_vendor_bank_account",
-                                                 vendor_name, attempt, timeout=3.0)
+                async with ctx.with_filler(
+                    "One moment while I verify that.", delay=0.5
+                ):
+                    d = await detector.authorize(
+                        ctx.userdata,
+                        "update_vendor_bank_account",
+                        vendor_name,
+                        attempt,
+                        timeout=3.0,
+                    )
             except Exception:
-                d = Decision.deny("detector_unavailable")          # fail closed
+                d = Decision.deny("detector_unavailable")  # fail closed
             if d.decision == "allow":
                 return await ramp_change_and_narrate(ctx.userdata, vendor_name)
             if d.decision == "deny":
                 await hold_vendor_and_open_bills(ctx.userdata, vendor_name)
                 return "Verification failed. Say a hold was placed and you will follow up, then end the call."
-            for factor in d.required_factors:     # voice_challenge, sms_otp, callback_on_file
-                await run_factor(factor, ctx)     # each awaits an AgentTask in this same asyncio task
+            for (
+                factor
+            ) in d.required_factors:  # voice_challenge, sms_otp, callback_on_file
+                await run_factor(
+                    factor, ctx
+                )  # each awaits an AgentTask in this same asyncio task
         return "Verification did not complete. Do not make the change."
 ```
 

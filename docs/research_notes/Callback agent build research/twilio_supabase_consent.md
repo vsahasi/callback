@@ -58,7 +58,7 @@ Verify works on a trial without buying a number (it sends from a Twilio-owned "V
   verification_check = client.verify.v2.services(
       "VAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   ).verification_checks.create(to="+15555550101", code="1234")
-  print(verification_check.status)   # "approved" on success, "pending" on a wrong code
+  print(verification_check.status)  # "approved" on success, "pending" on a wrong code
   ```
   — [Twilio: Verification Check resource](https://www.twilio.com/docs/verify/api/verification-check)
 - Check-attempt limit: error 60202 "Max (5) verification check attempts reached." (HTTP 429); you "have 5 attempts to check a verification code"; resolution is to wait for the verification to expire (10 minutes) and create a new one. — [Twilio: Error 60202](https://www.twilio.com/docs/api/errors/60202)
@@ -77,26 +77,39 @@ Verify works on a trial without buying a number (it sends from a Twilio-owned "V
   from twilio.base.exceptions import TwilioRestException
 
   client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
-  SVC = os.environ["TWILIO_VERIFY_SERVICE_SID"]   # create once: client.verify.v2.services.create(friendly_name="Callback")
+  SVC = os.environ[
+      "TWILIO_VERIFY_SERVICE_SID"
+  ]  # create once: client.verify.v2.services.create(friendly_name="Callback")
+
 
   def send_otp(phone_e164: str, channel: str = "sms") -> str:
       # channel="call" = callback-to-number-on-file fallback (keypad challenge, then code read aloud)
-      v = client.verify.v2.services(SVC).verifications.create(to=phone_e164, channel=channel)
-      return v.sid                      # status "pending"
+      v = client.verify.v2.services(SVC).verifications.create(
+          to=phone_e164, channel=channel
+      )
+      return v.sid  # status "pending"
+
 
   def check_otp(phone_e164: str, code: str) -> str:
       try:
-          r = client.verify.v2.services(SVC).verification_checks.create(to=phone_e164, code=code)
-          return r.status               # "approved" | "pending" (wrong code)
+          r = client.verify.v2.services(SVC).verification_checks.create(
+              to=phone_e164, code=code
+          )
+          return r.status  # "approved" | "pending" (wrong code)
       except TwilioRestException as e:
-          if e.status == 404:           # expired (10 min), already approved, or max 5 checks -> deleted
+          if (
+              e.status == 404
+          ):  # expired (10 min), already approved, or max 5 checks -> deleted
               return "expired"
-          if e.status == 429:           # 60202 max checks / 60203 max sends
+          if e.status == 429:  # 60202 max checks / 60203 max sends
               return "locked"
           raise
 
-  def cancel_otp(verification_sid: str) -> None:   # avoid 60203 during tests
-      client.verify.v2.services(SVC).verifications(verification_sid).update(status="canceled")
+
+  def cancel_otp(verification_sid: str) -> None:  # avoid 60203 during tests
+      client.verify.v2.services(SVC).verifications(verification_sid).update(
+          status="canceled"
+      )
   ```
   The Twilio SDK is synchronous; call it via `asyncio.to_thread(...)` from the LiveKit agent so you do not block the audio loop.
 - Design hooks: the code is only ever sent to the number on file (never a number spoken by the caller), so the `To` value should come from `users_on_file`, not from the transcript. `DoNotShareWarningEnabled=true` on the Service adds Twilio's "do not share this code" line to the SMS for free, which fits the anti-social-engineering story (not available on trial since templates are fixed; untested).
@@ -142,15 +155,22 @@ Free tier is enough for the demo (2 active projects, 500 MB Postgres, 200 concur
 - asyncpg setup (my composition from the documented settings):
   ```python
   import asyncpg, os
+
   pool = await asyncpg.create_pool(
-      os.environ["SUPABASE_DB_URL"],      # session mode: ...pooler.supabase.com:5432/postgres
-      min_size=1, max_size=5,
-      statement_cache_size=0,             # required only for transaction mode (6543); harmless on 5432
+      os.environ["SUPABASE_DB_URL"],  # session mode: ...pooler.supabase.com:5432/postgres
+      min_size=1,
+      max_size=5,
+      statement_cache_size=0,  # required only for transaction mode (6543); harmless on 5432
   )
   async with pool.acquire() as con:
       await con.execute(
           "insert into decisions(session_id, action, decision, risk_score, signals) values($1,$2,$3,$4,$5::jsonb)",
-          session_id, action, decision, risk, json.dumps(signals))
+          session_id,
+          action,
+          decision,
+          risk,
+          json.dumps(signals),
+      )
   ```
   Keep `max_size` small: the free plan's shared pooler has a limited pool per project (exact number not verified here).
 - Minimal schema for the dashboard (public-readable, no PII): keep `users_on_file`, `consent_log`, `enrollments` (embeddings) with RLS enabled and no anon policy (server writes with the secret key / direct Postgres role, which bypasses RLS), and expose only `sessions` and `decisions` with a `select`-only anon policy. Store `phone_last4`, never the full number, in the exposed tables; the Ramp vendor-account `account_number_last_four` field fits the same pattern.

@@ -20,11 +20,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 CONTRACT_VERSION = "1.1.0"
-CONTRACT_VERSION_HEADER = "X-Contract-Version"  # sent on every request to the detection service
-SCENARIO_HEADER = "X-Callback-Scenario"  # mock mode: picks a scripted demo call on POST /v1/sessions
+CONTRACT_VERSION_HEADER = (
+    "X-Contract-Version"  # sent on every request to the detection service
+)
+SCENARIO_HEADER = (
+    "X-Callback-Scenario"  # mock mode: picks a scripted demo call on POST /v1/sessions
+)
 RISK_TOPIC = "risk"  # LiveKit data topic that carries a RiskUpdate about every 2 s
-AUTHORIZE_TIMEOUT_S = 3.0  # /authorize answers within this; the agent treats a timeout as deny
-AUTHORIZE_SERVER_DEADLINE_S = 2.2  # past this the detector answers deny internal_timeout
+AUTHORIZE_TIMEOUT_S = (
+    3.0  # /authorize answers within this; the agent treats a timeout as deny
+)
+AUTHORIZE_SERVER_DEADLINE_S = (
+    2.2  # past this the detector answers deny internal_timeout
+)
 MOCK_OTP_CODE = "424242"  # the only code mock mode accepts; mock mode texts nothing
 
 
@@ -356,7 +364,8 @@ class ErrorResponse(_Model):
 def _models() -> list[type[_Model]]:
     """Every model in this module, so a new one can't be left out of the schema."""
     return [
-        m for m in globals().values()
+        m
+        for m in globals().values()
         if isinstance(m, type) and issubclass(m, _Model) and m is not _Model
     ]
 
@@ -381,4 +390,6 @@ if __name__ == "__main__":
     parser.add_argument("--write-schema", type=Path, required=True, metavar="PATH")
     args = parser.parse_args()
     args.write_schema.parent.mkdir(parents=True, exist_ok=True)
-    args.write_schema.write_text(json.dumps(contract_json_schema(), indent=2, sort_keys=True) + "\n")
+    args.write_schema.write_text(
+        json.dumps(contract_json_schema(), indent=2, sort_keys=True) + "\n"
+    )

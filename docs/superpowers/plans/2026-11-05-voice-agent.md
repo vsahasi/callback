@@ -190,52 +190,97 @@ import pytest
 from pydantic import ValidationError
 
 from callback_shared.contract import (
-    ACTION_TIER, AUTHORIZE_TIMEOUT_S, CONTRACT_VERSION_HEADER, RISK_TOPIC, SCENARIO_HEADER,
-    Action, Decision, DecisionKind, Factor, OtpState, Signals, Turn, contract_json_schema,
+    ACTION_TIER,
+    AUTHORIZE_TIMEOUT_S,
+    CONTRACT_VERSION_HEADER,
+    RISK_TOPIC,
+    SCENARIO_HEADER,
+    Action,
+    Decision,
+    DecisionKind,
+    Factor,
+    OtpState,
+    Signals,
+    Turn,
+    contract_json_schema,
 )
 
 SPEC_DECISION = {  # the Decision example from the spec's Contract tab, with concrete values
-    "session_id": "s1", "action": "update_vendor_bank_account", "decision": "step_up",
-    "risk_score": 0.0, "required_factors": ["voice_challenge", "sms_otp", "callback_on_file"],
+    "session_id": "s1",
+    "action": "update_vendor_bank_account",
+    "decision": "step_up",
+    "risk_score": 0.0,
+    "required_factors": ["voice_challenge", "sms_otp", "callback_on_file"],
     "signals": {
-        "voiceprint": {"score": 0.71, "threshold": 0.62, "passed": True, "phrase_match": True},
+        "voiceprint": {
+            "score": 0.71,
+            "threshold": 0.62,
+            "passed": True,
+            "phrase_match": True,
+        },
         "deepfake": {"spoof_prob": 0.12, "windows": 9},
         "text": {"risk": 0.8, "flags": [{"type": "payment_change", "evidence": "..."}]},
-        "agent_likelihood": 0.3, "otp": "pending",
+        "agent_likelihood": 0.3,
+        "otp": "pending",
     },
     "reasons": ["Payment-detail change requested", "Voiceprint passed"],
-    "agent_say": "For security, I'll text a code to the number we have on file.", "ttl_s": 120,
+    "agent_say": "For security, I'll text a code to the number we have on file.",
+    "ttl_s": 120,
 }
+
 
 def test_spec_decision_example_parses():
     d = Decision.model_validate(SPEC_DECISION)
     assert d.decision is DecisionKind.STEP_UP
-    assert d.required_factors == [Factor.VOICE_CHALLENGE, Factor.SMS_OTP, Factor.CALLBACK_ON_FILE]
+    assert d.required_factors == [
+        Factor.VOICE_CHALLENGE,
+        Factor.SMS_OTP,
+        Factor.CALLBACK_ON_FILE,
+    ]
     assert d.signals.deepfake.spoof_prob == 0.12
+
 
 def test_unknown_response_fields_are_ignored():
     Decision.model_validate({**SPEC_DECISION, "added_later": 1})
 
+
 def test_otp_accepts_n_a():
     assert Signals(otp="n/a").otp is OtpState.NOT_APPLICABLE
+
 
 def test_action_tiers_match_spec():
     by_tier = {t: {a for a, at in ACTION_TIER.items() if at == t} for t in (0, 1, 2)}
     assert by_tier[0] == {Action.HOLD_VENDOR, Action.HOLD_BILL}
-    assert by_tier[1] == {Action.LIST_VENDORS, Action.LIST_VENDOR_ACCOUNTS, Action.LIST_BILLS}
-    assert by_tier[2] == {Action.UPDATE_VENDOR_BANK_ACCOUNT, Action.RELEASE_VENDOR_HOLD, Action.RELEASE_BILL_HOLD}
+    assert by_tier[1] == {
+        Action.LIST_VENDORS,
+        Action.LIST_VENDOR_ACCOUNTS,
+        Action.LIST_BILLS,
+    }
+    assert by_tier[2] == {
+        Action.UPDATE_VENDOR_BANK_ACCOUNT,
+        Action.RELEASE_VENDOR_HOLD,
+        Action.RELEASE_BILL_HOLD,
+    }
     assert set(ACTION_TIER) == set(Action)
+
 
 def test_turn_times_are_whole_ms():
     with pytest.raises(ValidationError):
         Turn(role="user", text="hi", start_ms=1.5, end_ms=2)
 
+
 def test_agent_turn_may_have_no_words():
     assert Turn(role="agent", text="Hi", start_ms=1, end_ms=2).words == []
 
+
 def test_constants():
-    assert (CONTRACT_VERSION_HEADER, SCENARIO_HEADER, RISK_TOPIC, AUTHORIZE_TIMEOUT_S) == (
-        "X-Contract-Version", "X-Callback-Scenario", "risk", 3.0)
+    assert (
+        CONTRACT_VERSION_HEADER,
+        SCENARIO_HEADER,
+        RISK_TOPIC,
+        AUTHORIZE_TIMEOUT_S,
+    ) == ("X-Contract-Version", "X-Callback-Scenario", "risk", 3.0)
+
 
 def test_schema_matches_snapshot():
     snap = pathlib.Path(__file__).parent / "snapshots" / "contract_schema.json"
@@ -346,9 +391,11 @@ git commit -m "Add the shared detector contract and the agent package"
 Spoken lines (plain speech, per Veer's preference):
 
 ```python
-DISCLOSURE = ("Hi, this is Callback, an automated assistant for your Ramp account. This call is recorded and "
-              "analyzed by automated fraud checks, including our service providers, to confirm it's you. "
-              "If that's not okay, you can hang up now.")
+DISCLOSURE = (
+    "Hi, this is Callback, an automated assistant for your Ramp account. This call is recorded and "
+    "analyzed by automated fraud checks, including our service providers, to confirm it's you. "
+    "If that's not okay, you can hang up now."
+)
 ASK_WHO = "Ask who you're speaking with. One short sentence."
 ```
 
@@ -361,9 +408,16 @@ The research found no rule in force that requires announcing an AI on an inbound
 def test_missing_required_names_are_all_reported():
     with pytest.raises(ValueError, match="CARTESIA_VOICE_ID.*DETECTOR_URL"):
         Settings.from_env({}, required=("CARTESIA_VOICE_ID", "DETECTOR_URL"))
+
+
 def test_scenario_and_defaults():
     s = Settings.from_env({"CARTESIA_VOICE_ID": "v", "DETECTOR_SCENARIO": "replay"})
-    assert (s.agent_name, s.detector_scenario, s.ramp_base_url) == ("callback", Scenario.REPLAY, "https://demo-api.ramp.com")
+    assert (s.agent_name, s.detector_scenario, s.ramp_base_url) == (
+        "callback",
+        Scenario.REPLAY,
+        "https://demo-api.ramp.com",
+    )
+
 
 # test_audio_check.py
 @pytest.mark.parametrize("sr", [16000, 24000, 48000])
@@ -373,7 +427,10 @@ def test_high_band_ratio(sr):
     assert high_band_ratio(low, sr) < 0.01
     assert high_band_ratio(high, sr) > 0.9
     assert high_band_ratio(low + high, sr) == pytest.approx(0.5, abs=0.05)
-def test_probe_ignores_silence(): ...      # 10 s of zeros -> verdict() is None
+
+
+def test_probe_ignores_silence(): ...  # 10 s of zeros -> verdict() is None
+
 
 # test_agent_text.py (offline, uses the copied FakeLLM)
 async def test_disclosure_is_said_first():
@@ -631,7 +688,9 @@ Spoken lines to add to `prompts.py`. The deny wording is from the spec's `agent_
 
 ```python
 DENY_HELD = "I can't make that change on this call, but I've placed a hold to keep things safe. We'll follow up through the usual channel."
-DENY_NOT_HELD = "I can't help with that on this call. We'll follow up through the usual channel."
+DENY_NOT_HELD = (
+    "I can't help with that on this call. We'll follow up through the usual channel."
+)
 IDENTIFY_FIRST = "Ask the caller for their full name and call identify_caller before any account request."
 RAMP_FAILED = "Ramp didn't accept that change. Tell the caller it didn't go through and the team will follow up."
 VERIFYING = "One moment while I verify that."
@@ -640,36 +699,66 @@ VERIFYING = "One moment while I verify that."
 - [ ] **Step 1: Write the failing tests.** `test_actions.py`:
 
 ```python
-BANK = ActionRequest.update_vendor_bank_account("v1", "Acme Supplies", "021000021", "000123456789")
+BANK = ActionRequest.update_vendor_bank_account(
+    "v1", "Acme Supplies", "021000021", "000123456789"
+)
+
 
 def test_bank_change_params_sent_to_detector_are_redacted():
     assert BANK.detector_params() == {
-        "vendor_id": "v1", "vendor_name": "Acme Supplies", "new_account_last4": "6789",
+        "vendor_id": "v1",
+        "vendor_name": "Acme Supplies",
+        "new_account_last4": "6789",
         "new_routing_last4": "0021",
-        "account_fingerprint": hashlib.sha256(b"021000021|000123456789").hexdigest()[:16]}
+        "account_fingerprint": hashlib.sha256(b"021000021|000123456789").hexdigest()[
+            :16
+        ],
+    }
+
 
 def test_bad_routing_number_is_rejected():
     with pytest.raises(ValueError):
-        ActionRequest.update_vendor_bank_account("v1", "Acme Supplies", "021000022", "000123456789")
+        ActionRequest.update_vendor_bank_account(
+            "v1", "Acme Supplies", "021000022", "000123456789"
+        )
+
 
 def test_idempotency_key_changes_per_round():
     assert BANK.idempotency_key("s1", 0) != BANK.idempotency_key("s1", 1)
 
+
 def test_hold_targets():
     assert BANK.hold_target() == HoldTarget("vendor", "v1")
-    assert ActionRequest.release_bill_hold("b1", "v1").hold_target() == HoldTarget("vendor", "v1")
-    assert ActionRequest.list_vendor_accounts("v1", "Acme Supplies").hold_target() == HoldTarget("vendor", "v1")   # V6 (final ruling): a denied read holds its vendor
+    assert ActionRequest.release_bill_hold("b1", "v1").hold_target() == HoldTarget(
+        "vendor", "v1"
+    )
+    assert ActionRequest.list_vendor_accounts(
+        "v1", "Acme Supplies"
+    ).hold_target() == HoldTarget(
+        "vendor", "v1"
+    )  # V6 (final ruling): a denied read holds its vendor
     assert ActionRequest.list_vendors().hold_target() is None
+
 
 async def test_pending_vendor_hold_also_holds_open_bills():
     # Ramp: vendor hold -> 202; open bills b1, b2 -> hold_bill returns ON_HOLD
     assert await hold_vendor_fully(ramp, "v1", "x") is True
-    assert ramp.calls == [("hold_vendor", "v1"), ("list_bills", "v1"), ("hold_bill", "b1"), ("hold_bill", "b2")]
+    assert ramp.calls == [
+        ("hold_vendor", "v1"),
+        ("list_bills", "v1"),
+        ("hold_bill", "b1"),
+        ("hold_bill", "b2"),
+    ]
 
-async def test_pending_vendor_hold_with_no_open_bills_is_not_held(): ...   # -> False
+
+async def test_pending_vendor_hold_with_no_open_bills_is_not_held(): ...  # -> False
+
 
 def test_bank_change_context():
-    assert BANK.context().pending_action == "change Acme Supplies' bank account to one ending 6789"
+    assert (
+        BANK.context().pending_action
+        == "change Acme Supplies' bank account to one ending 6789"
+    )
 ```
 
 `test_gate.py` uses in-memory fakes: a detector that pops scripted `Decision`s and records requests, a Ramp that records `(method, *args)` and returns canned outcomes, step-ups returning scripted results per factor, a speaker recording lines, and a call control recording `end_call`.
@@ -794,18 +883,36 @@ async def test_bill_tools_need_a_listed_bill(): ...
 `test_structure.py` holds the static guard behind "Don't give the LLM any Ramp write tool that skips the gate":
 
 ```python
-RAMP_WRITES = {"hold_vendor", "release_vendor", "hold_bill", "release_bill", "add_default_bank_account", "request"}
+RAMP_WRITES = {
+    "hold_vendor",
+    "release_vendor",
+    "hold_bill",
+    "release_bill",
+    "add_default_bank_account",
+    "request",
+}
+
 
 def test_only_actions_module_calls_ramp_writes():
     # ast-walk every module in src/callback_agent except actions.py and ramp.py; any Call whose func is an
     # Attribute named in RAMP_WRITES on a receiver whose source text contains "ramp" is a failure
     assert offenders == []
 
+
 def test_agent_exposes_exactly_these_tools():
     # tool_names(agent) = {t.id for t in agent.tools}; the LiveKit notes (Q5) filter tools by .id
     assert tool_names(CallbackAgent(toolbox=FAKE)) == {
-        "identify_caller", "list_vendors", "get_vendor_bank_account", "list_open_bills", "hold_vendor",
-        "hold_bill", "change_vendor_bank_account", "release_vendor_hold", "release_bill_hold", "end_call"}
+        "identify_caller",
+        "list_vendors",
+        "get_vendor_bank_account",
+        "list_open_bills",
+        "hold_vendor",
+        "hold_bill",
+        "change_vendor_bank_account",
+        "release_vendor_hold",
+        "release_bill_hold",
+        "end_call",
+    }
 ```
 
 `test_say_task.py` is offline and uses the copied `FakeLLM`. A test agent's tool awaits `LiveKitVoice(session).say("hello")`:
@@ -814,7 +921,7 @@ def test_agent_exposes_exactly_these_tools():
 async def test_say_from_a_tool_returns():
     # FakeLLM: input "go" -> tool call "speak"; input "said" -> content "ok"
     await asyncio.wait_for(session.run(user_input="go"), timeout=5)
-    assert spoken_items == ["hello"]      # from conversation_item_added
+    assert spoken_items == ["hello"]  # from conversation_item_added
 ```
 
 `test_agent_llm.py` (marked `llm`) drives the real LLM in text mode with a fake `Toolbox`, using the LiveKit test harness described in Task 2:
@@ -876,22 +983,30 @@ def test_anchor_uses_the_first_frame_only():
     a.observe_frame(0.02, 1005.00)
     assert a.t0 == pytest.approx(1000.0) and a.to_ms(1.5) == 1001500
 
+
 def test_user_turn_words_are_epoch_ms():
-    seg = FinalSegment("four two", 0.40, 0.90, (("four", 0.42, 0.56), ("two", 0.60, 0.88)), t0=1000.0)
+    seg = FinalSegment(
+        "four two", 0.40, 0.90, (("four", 0.42, 0.56), ("two", 0.60, 0.88)), t0=1000.0
+    )
     turn = build_user_turn([seg], interrupted=False)
     assert (turn.role, turn.start_ms, turn.end_ms) == (Role.USER, 1000400, 1000900)
-    assert turn.words == [Word(w="four", start_ms=1000420, end_ms=1000560),
-                          Word(w="two", start_ms=1000600, end_ms=1000880)]
+    assert turn.words == [
+        Word(w="four", start_ms=1000420, end_ms=1000560),
+        Word(w="two", start_ms=1000600, end_ms=1000880),
+    ]
 
-def test_user_turn_merges_segments(): ...   # text joined with a space, start of first, end of last, words concatenated
+
+def test_user_turn_merges_segments(): ...  # text joined with a space, start of first, end of last, words concatenated
 def test_agent_turn_has_no_words(): ...
+
 
 async def test_forwarder_buffers_until_attached_then_posts_in_order():
     # submit turn A, event B, turn C, then attach("s1")
     assert posted == [("s1", A), ("s1", B), ("s1", C)]
 
+
 async def test_forwarder_retries_once_then_drops_and_keeps_going(): ...  # first item fails twice, second still posts
-async def test_forwarder_buffer_is_bounded(): ...   # max_buffer=2 and three submits: only the last two post
+async def test_forwarder_buffer_is_bounded(): ...  # max_buffer=2 and three submits: only the last two post
 def test_submit_never_raises_when_the_detector_is_down(): ...
 ```
 
@@ -956,19 +1071,41 @@ PROBE_QUESTION = "Quick one, what's the weather like there?"
 - [ ] **Step 1: Write the failing tests.**
 
 ```python
-@pytest.mark.parametrize("text, digits", [
-    ("four two four two four two", "424242"), ("424 242", "424242"), ("4-2-4, 2-4-2", "424242"),
-    ("um the code is 4 2 4 2 4 2", "424242"), ("oh one two", "012"), ("zero one two", "012"),
-    ("double four two", "442"), ("triple seven", "777"), ("forty two", "42"), ("forty", "40"),
-    ("Four. Two. Four.", "424"), ("I didn't get it", ""),
-])
+@pytest.mark.parametrize(
+    "text, digits",
+    [
+        ("four two four two four two", "424242"),
+        ("424 242", "424242"),
+        ("4-2-4, 2-4-2", "424242"),
+        ("um the code is 4 2 4 2 4 2", "424242"),
+        ("oh one two", "012"),
+        ("zero one two", "012"),
+        ("double four two", "442"),
+        ("triple seven", "777"),
+        ("forty two", "42"),
+        ("forty", "40"),
+        ("Four. Two. Four.", "424"),
+        ("I didn't get it", ""),
+    ],
+)
 def test_parse_spoken_digits(text, digits):
     assert parse_spoken_digits(text) == digits
 
-@pytest.mark.parametrize("text, answer", [
-    ("yes", True), ("Yeah, that was me.", True), ("correct", True), ("Yes, I agree", True),
-    ("no", False), ("Nope, that wasn't me", False), ("I don't agree", False), ("what?", None), ("", None),
-])
+
+@pytest.mark.parametrize(
+    "text, answer",
+    [
+        ("yes", True),
+        ("Yeah, that was me.", True),
+        ("correct", True),
+        ("Yes, I agree", True),
+        ("no", False),
+        ("Nope, that wasn't me", False),
+        ("I don't agree", False),
+        ("what?", None),
+        ("", None),
+    ],
+)
 def test_parse_yes_no(text, answer):
     assert parse_yes_no(text) is answer
 ```
@@ -1053,14 +1190,20 @@ The channel comes from `state`, so phone and browser enroll separately, as the s
 
 ```python
 CONSENT_VERSION = "2026-11-04"
-CONSENT_TEXT = ("To protect your company's account, Callback creates a voiceprint, a set of numbers derived from your voice, "
-                "and analyzes call audio and transcripts for fraud. Raw audio is not kept. Your data is deleted by "
-                "November 30, 2026, or sooner if you ask. Do you agree?")   # verbatim from the spec
+CONSENT_TEXT = (
+    "To protect your company's account, Callback creates a voiceprint, a set of numbers derived from your voice, "
+    "and analyzes call audio and transcripts for fraud. Raw audio is not kept. Your data is deleted by "
+    "November 30, 2026, or sooner if you ask. Do you agree?"
+)  # verbatim from the spec
 ENROLL_RETRY = "Let's try that one again."
 ENROLL_DONE = "You're enrolled. Next time you call, I can check it's really you."
 ENROLL_DECLINED = "No problem, I won't create a voiceprint."
-ENROLL_ABORTED = "I couldn't get clear enough audio to enroll you. Let's try again another time."
-ENROLL_OTP_FAILED = "I couldn't verify the code, so I can't enroll your voice on this call."
+ENROLL_ABORTED = (
+    "I couldn't get clear enough audio to enroll you. Let's try again another time."
+)
+ENROLL_OTP_FAILED = (
+    "I couldn't verify the code, so I can't enroll your voice on this call."
+)
 ```
 
 - [ ] **Step 1: Write the failing tests** in `agent/tests/test_enrollment.py`:
@@ -1179,8 +1322,10 @@ How the leg works in one session (LiveKit notes, Q3; the official `examples/tele
    - The gate then re-authorizes. The spec says "a callback re-runs the voice challenge", so expect a fresh `voice_challenge` on the new leg before `allow`.
 
 ```python
-CALLBACK_LINE = "For your security I'll hang up and call you back on the number we have on file."   # spec template
-CALLBACK_CONFIRM = "I'm calling you back about your request. Did you just ask me to {pending_action}?"
+CALLBACK_LINE = "For your security I'll hang up and call you back on the number we have on file."  # spec template
+CALLBACK_CONFIRM = (
+    "I'm calling you back about your request. Did you just ask me to {pending_action}?"
+)
 ```
 
 `CALLBACK_CONFIRM` is filled from `req.context().pending_action`.

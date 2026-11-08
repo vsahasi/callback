@@ -45,28 +45,41 @@ A no-LLM challenge turn is feasible: `session.say(..., allow_interruptions=False
   ```python
   from livekit.agents import Agent, AgentTask, function_tool
 
+
   class CollectConsent(AgentTask[bool]):
       def __init__(self, chat_ctx=None):
-          super().__init__(instructions="Ask for recording consent and get a clear yes or no answer.", chat_ctx=chat_ctx)
+          super().__init__(
+              instructions="Ask for recording consent and get a clear yes or no answer.",
+              chat_ctx=chat_ctx,
+          )
+
       async def on_enter(self) -> None:
-          await self.session.generate_reply(instructions="Ask for permission to record the call...")
+          await self.session.generate_reply(
+              instructions="Ask for permission to record the call..."
+          )
+
       @function_tool
       async def consent_given(self) -> None:
           """Use this when the user gives consent to record."""
           self.complete(True)
+
       @function_tool
       async def consent_denied(self) -> None:
           """Use this when the user denies consent to record."""
           self.complete(False)
 
+
   class CustomerServiceAgent(Agent):
       async def on_enter(self) -> None:
-          if await CollectConsent(chat_ctx=self.chat_ctx):        # awaited from on_enter
+          if await CollectConsent(chat_ctx=self.chat_ctx):  # awaited from on_enter
               ...
+
       @function_tool()
       async def collect_contact_info(self):
           """Collect the user's contact information."""
-          result = await GetContactInfoTask(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))  # from a tool
+          result = await GetContactInfoTask(
+              chat_ctx=self.chat_ctx.copy(exclude_instructions=True)
+          )  # from a tool
           return f"Recorded contact info for {result.name}."
   ```
 
@@ -162,39 +175,49 @@ A no-LLM challenge turn is feasible: `session.say(..., allow_interruptions=False
   from dataclasses import dataclass
   from livekit.agents import AgentTask, StopResponse, llm
 
+
   @dataclass
   class ChallengeResult:
-      transcript: str | None           # None on timeout
-      agent_speech_end: float | None   # wall clock when local playout finished
+      transcript: str | None  # None on timeout
+      agent_speech_end: float | None  # wall clock when local playout finished
       timed_out: bool = False
+
 
   class VoiceChallengeTask(AgentTask[ChallengeResult]):
       def __init__(self, phrase: str, *, answer_timeout: float = 30.0) -> None:
           super().__init__(
-              instructions="Verification step.",                  # required kwarg in 1.8.10
-              llm=None,                                            # variant A: no LLM at all in this task
-              turn_handling={"preemptive_generation": {"enabled": False}},  # matters if you keep an LLM
+              instructions="Verification step.",  # required kwarg in 1.8.10
+              llm=None,  # variant A: no LLM at all in this task
+              turn_handling={
+                  "preemptive_generation": {"enabled": False}
+              },  # matters if you keep an LLM
           )
           self._phrase, self._timeout = phrase, answer_timeout
           self._speech_end: float | None = None
           self._timer: asyncio.TimerHandle | None = None
 
       async def on_enter(self) -> None:
-          handle = self.session.say(self._phrase, allow_interruptions=False, add_to_chat_ctx=False)
-          await handle                                   # == handle.wait_for_playout()
+          handle = self.session.say(
+              self._phrase, allow_interruptions=False, add_to_chat_ctx=False
+          )
+          await handle  # == handle.wait_for_playout()
           self._speech_end = time.time()
-          self._timer = asyncio.get_running_loop().call_later(self._timeout, self._on_timeout)
+          self._timer = asyncio.get_running_loop().call_later(
+              self._timeout, self._on_timeout
+          )
 
       def _on_timeout(self) -> None:
           if not self.done():
               self.complete(ChallengeResult(None, self._speech_end, timed_out=True))
 
-      async def on_user_turn_completed(self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage) -> None:
+      async def on_user_turn_completed(
+          self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
+      ) -> None:
           if self._speech_end is not None and not self.done():
               if self._timer:
                   self._timer.cancel()
               self.complete(ChallengeResult(new_message.text_content, self._speech_end))
-          raise StopResponse()   # no LLM reply, and the user message is not added to chat_ctx
+          raise StopResponse()  # no LLM reply, and the user message is not added to chat_ctx
   ```
   - From a tool: `res = await VoiceChallengeTask(phrase)`. When the task finishes, the parent resumes and the tool continues with `res`.
   - Because `add_to_chat_ctx=False` and `StopResponse` keep both the phrase and the answer out of the task's chat context, nothing about the challenge is merged into the parent LLM's context. That is desirable if the main LLM must not be able to repeat the phrase.
@@ -217,7 +240,7 @@ A no-LLM challenge turn is feasible: `session.say(..., allow_interruptions=False
       last = chat_ctx.items[-1]
       if last.type == "message" and last.role == "user" and not self.done():
           self.complete(ChallengeResult(last.text_content, self._speech_end))
-      return None   # generation.py L263: non-AsyncIterable -> no reply
+      return None  # generation.py L263: non-AsyncIterable -> no reply
   ```
   The cost: on this path the user message *is* added to the task's chat context, and it is later merged into the parent's (merge excludes only function calls and system messages). Strip it afterwards if the parent LLM must not see it.
 - **SMS-code step.** The same pattern works (say the prompt, capture the next utterance). Alternatively, use an LLM-driven task with a `record_code(code: str)` tool, as in the docs' `CollectConsent` pattern, if you want the LLM to normalise "four two seven…" into digits. `GetDtmfTask` exists if keypad entry is acceptable.
@@ -247,8 +270,11 @@ Caveat for Callback: `session.run()` goes through `generate_reply()`, so `on_use
       ):
           await session.start(Assistant())
           result = await session.run(user_input="Hello")
-          await result.expect.next_event().is_message(role="assistant").judge(
-              llm, intent="Makes a friendly introduction and offers assistance.")
+          await (
+              result.expect.next_event()
+              .is_message(role="assistant")
+              .judge(llm, intent="Makes a friendly introduction and offers assistance.")
+          )
           result.expect.no_more_events()
   ```
 - The repo's pytest config sets `asyncio_mode = "auto"` and `asyncio_default_fixture_loop_scope = "function"` — [pyproject.toml L178-L180](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/pyproject.toml#L178-L180)
@@ -285,15 +311,33 @@ Caveat for Callback: `session.run()` goes through `generate_reply()`, so `on_use
   - It imports only public names: `livekit.agents.llm.{LLM, ChatChunk, ChatContext, ChoiceDelta, FunctionToolCall, LLMStream, Tool, ToolChoice}` and `livekit.agents.types.{DEFAULT_API_CONNECT_OPTIONS, NOT_GIVEN, APIConnectOptions, NotGivenOr}`.
 - **Multi-input `AgentTask` flow (repo test).** The pattern to copy, abridged from [tests/test_nested_agent_task.py L114-L160](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/tests/test_nested_agent_task.py#L114-L160):
   ```python
-  llm = FakeLLM(fake_responses=[
-      FakeLLMResponse(input="enter_greeting", content="", ttft=1.0, duration=1.0,
-          tool_calls=[FunctionToolCall(name="start_task", arguments="{}", call_id="call_1")]),
-      FakeLLMResponse(input="hi", content="hello!", ttft=1.0, duration=2.0),
-      FakeLLMResponse(input="task_greeting", content="hello from task", ttft=0, duration=0),
-      FakeLLMResponse(input="bye", content="", ttft=0, duration=0,
-          tool_calls=[FunctionToolCall(name="finish", arguments="{}", call_id="call_2")]),
-      FakeLLMResponse(input="task completed", content="all done", ttft=0, duration=0),
-  ])
+  llm = FakeLLM(
+      fake_responses=[
+          FakeLLMResponse(
+              input="enter_greeting",
+              content="",
+              ttft=1.0,
+              duration=1.0,
+              tool_calls=[
+                  FunctionToolCall(name="start_task", arguments="{}", call_id="call_1")
+              ],
+          ),
+          FakeLLMResponse(input="hi", content="hello!", ttft=1.0, duration=2.0),
+          FakeLLMResponse(
+              input="task_greeting", content="hello from task", ttft=0, duration=0
+          ),
+          FakeLLMResponse(
+              input="bye",
+              content="",
+              ttft=0,
+              duration=0,
+              tool_calls=[
+                  FunctionToolCall(name="finish", arguments="{}", call_id="call_2")
+              ],
+          ),
+          FakeLLMResponse(input="task completed", content="all done", ttft=0, duration=0),
+      ]
+  )
   async with AgentSession(llm=llm) as sess:
       await sess.start(EnterHandoffAgent())
       await asyncio.wait_for(sess.run(user_input="hi"), timeout=5.0)
@@ -328,15 +372,32 @@ Caveat for Callback: `session.run()` goes through `generate_reply()`, so `on_use
   # tests/test_gate.py   (pytest-asyncio; asyncio_mode="auto" or @pytest.mark.asyncio)
   from livekit.agents import AgentSession
   from livekit.agents.llm import FunctionToolCall
-  from .fake_llm import FakeLLM, FakeLLMResponse   # copied from livekit/agents@1.8.10 tests/
+  from .fake_llm import (
+      FakeLLM,
+      FakeLLMResponse,
+  )  # copied from livekit/agents@1.8.10 tests/
+
 
   async def test_send_money_requires_voice_challenge():
-      llm = FakeLLM(fake_responses=[
-          FakeLLMResponse(input="send 500 dollars to Bob", content="", ttft=0, duration=0,
-              tool_calls=[FunctionToolCall(name="send_money", arguments='{"amount": 500}', call_id="c1")]),
-          FakeLLMResponse(input="transfer sent", content="Done, it's sent.", ttft=0, duration=0),
-      ])
-      gate = FakeGate(step_ups=["voice"])            # your detection-service stub
+      llm = FakeLLM(
+          fake_responses=[
+              FakeLLMResponse(
+                  input="send 500 dollars to Bob",
+                  content="",
+                  ttft=0,
+                  duration=0,
+                  tool_calls=[
+                      FunctionToolCall(
+                          name="send_money", arguments='{"amount": 500}', call_id="c1"
+                      )
+                  ],
+              ),
+              FakeLLMResponse(
+                  input="transfer sent", content="Done, it's sent.", ttft=0, duration=0
+              ),
+          ]
+      )
+      gate = FakeGate(step_ups=["voice"])  # your detection-service stub
       async with AgentSession(llm=llm) as session:
           await session.start(BankAgent(gate=gate))
           await session.run(user_input="send 500 dollars to Bob")
@@ -400,19 +461,26 @@ Re-linking swaps the `rtc.AudioStream` feeding the session's single audio channe
 - **Test coverage of unlink and re-link.** `test_roomio_away_timer_waits_for_linked_participant` starts with `RoomOptions(..., close_on_disconnect=False)`, emits `participant_disconnected`, and asserts `linked_participant is None` with the user state staying `listening` while unlinked. It then re-links via `set_participant`/`participant_connected` and asserts the timer resumes — [tests/test_room_io.py L544-L620](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/tests/test_room_io.py#L544-L620)
 - **Official dial-then-continue example** — [examples/telephony/amd.py L60-L103](https://github.com/livekit/agents/blob/livekit-agents%401.8.10/examples/telephony/amd.py#L60-L103), copied with trimming:
   ```python
-  session.room_io.set_participant(participant_identity)        # focus before dialing (L73)
+  session.room_io.set_participant(participant_identity)  # focus before dialing (L73)
   try:
       await ctx.api.sip.create_sip_participant(
-          api.CreateSIPParticipantRequest(room_name=ctx.room.name, sip_trunk_id=outbound_trunk_id,
-              sip_call_to=phone_number, participant_identity=participant_identity,
-              wait_until_answered=True),
-          timeout=45)   # "The API timeout must outlast the ring window"
+          api.CreateSIPParticipantRequest(
+              room_name=ctx.room.name,
+              sip_trunk_id=outbound_trunk_id,
+              sip_call_to=phone_number,
+              participant_identity=participant_identity,
+              wait_until_answered=True,
+          ),
+          timeout=45,
+      )  # "The API timeout must outlast the ring window"
   except (api.SipCallError, asyncio.TimeoutError) as e:
-      ctx.shutdown("call not answered"); return
+      ctx.shutdown("call not answered")
+      return
   # "The call may end just before wait_until_answered returns."
   participant = ctx.room.remote_participants.get(participant_identity)
   if participant is None:
-      ctx.shutdown("participant missing"); return
+      ctx.shutdown("participant missing")
+      return
   ```
   The same example registers `ctx.add_shutdown_callback(hangup)`, which deletes the room.
 - **Outbound outcomes** — [outbound-calls.md "Handling call outcomes"](https://docs.livekit.io/telephony/making-calls/outbound-calls.md):
@@ -428,7 +496,10 @@ Re-linking swaps the `rtc.AudioStream` feeding the session's single audio channe
 - **Removing one participant** (docs snippet; page URL not resolved, cited via the combined docs file) — [docs llms-full.txt](https://docs.livekit.io/llms-full.txt); signature `remove_participant(self, remove: RoomParticipantIdentity) -> RemoveParticipantResponse` — [python-sdks room_service.py L190-L202 (main)](https://github.com/livekit/python-sdks/blob/main/livekit-api/livekit/api/room_service.py#L190-L202):
   ```python
   from livekit.api import RoomParticipantIdentity
-  await lkapi.room.remove_participant(RoomParticipantIdentity(room=room_name, identity=identity))
+
+  await lkapi.room.remove_participant(
+      RoomParticipantIdentity(room=room_name, identity=identity)
+  )
   ```
   The same docs passage notes that "On LiveKit Cloud, the cutoff stays in effect for 10 minutes after the `RemoveParticipant` call" (token revocation).
 - **Ending the whole call** — [outbound-calls.md "Hang up"](https://docs.livekit.io/telephony/making-calls/outbound-calls.md):
@@ -457,33 +528,64 @@ Re-linking swaps the `rtc.AudioStream` feeding the session's single audio channe
 - **Recommended single-session callback flow.** Untested; assembled from the cited APIs.
   ```python
   # entrypoint
-  await session.start(agent=BankAgent(...), room=ctx.room,
-                      room_options=room_io.RoomOptions(close_on_disconnect=False))   # we own hangups
+  await session.start(
+      agent=BankAgent(...),
+      room=ctx.room,
+      room_options=room_io.RoomOptions(close_on_disconnect=False),
+  )  # we own hangups
+
+
   # because close_on_disconnect=False, end the call yourself on unplanned hangups:
   @ctx.room.on("participant_disconnected")
   def _on_left(p: rtc.RemoteParticipant):
       if p.identity == current_linked_identity and not callback_in_progress:
-          asyncio.create_task(_end_call())   # session.shutdown(); ctx.delete_room() / ctx.shutdown()
+          asyncio.create_task(
+              _end_call()
+          )  # session.shutdown(); ctx.delete_room() / ctx.shutdown()
 
-  class CallbackTask(AgentTask[CallbackResult]):          # awaited from the gated tool
+
+  class CallbackTask(AgentTask[CallbackResult]):  # awaited from the gated tool
       async def on_enter(self) -> None:
           ctx = get_job_context()
-          await self.session.say("For your security I'll hang up and call you back on the number we have on file.",
-                                 allow_interruptions=False, add_to_chat_ctx=False)
-          await ctx.api.room.remove_participant(api.RoomParticipantIdentity(room=ctx.room.name, identity=self._caller))
-          callee = f"callback-{uuid4().hex[:8]}"           # fresh identity, not the removed caller's
-          self.session.room_io.set_participant(callee)    # link before dialing (amd.py pattern)
+          await self.session.say(
+              "For your security I'll hang up and call you back on the number we have on file.",
+              allow_interruptions=False,
+              add_to_chat_ctx=False,
+          )
+          await ctx.api.room.remove_participant(
+              api.RoomParticipantIdentity(room=ctx.room.name, identity=self._caller)
+          )
+          callee = (
+              f"callback-{uuid4().hex[:8]}"  # fresh identity, not the removed caller's
+          )
+          self.session.room_io.set_participant(
+              callee
+          )  # link before dialing (amd.py pattern)
           try:
-              await ctx.api.sip.create_sip_participant(api.CreateSIPParticipantRequest(
-                  room_name=ctx.room.name, sip_trunk_id=self._trunk_id, sip_call_to=self._number_on_file,
-                  participant_identity=callee, wait_until_answered=True), timeout=45)
-          except api.SipCallError as e:                   # 486/603 busy/decline, 408/480 no answer, 5xx trunk
-              self.complete(CallbackResult(answered=False, sip_status=e.sip_status_code)); return
+              await ctx.api.sip.create_sip_participant(
+                  api.CreateSIPParticipantRequest(
+                      room_name=ctx.room.name,
+                      sip_trunk_id=self._trunk_id,
+                      sip_call_to=self._number_on_file,
+                      participant_identity=callee,
+                      wait_until_answered=True,
+                  ),
+                  timeout=45,
+              )
+          except (
+              api.SipCallError
+          ) as e:  # 486/603 busy/decline, 408/480 no answer, 5xx trunk
+              self.complete(CallbackResult(answered=False, sip_status=e.sip_status_code))
+              return
           except asyncio.TimeoutError:
-              self.complete(CallbackResult(answered=False, sip_status=None)); return
+              self.complete(CallbackResult(answered=False, sip_status=None))
+              return
           if ctx.room.remote_participants.get(callee) is None:
-              self.complete(CallbackResult(answered=False, sip_status=None)); return
-          res = await VoiceChallengeTask(self._phrase)    # nested task awaited from on_enter: allowed
+              self.complete(CallbackResult(answered=False, sip_status=None))
+              return
+          res = await VoiceChallengeTask(
+              self._phrase
+          )  # nested task awaited from on_enter: allowed
           self.complete(CallbackResult(answered=True, challenge=res))
   ```
 - **Two ways the session stays up after the caller leaves.**

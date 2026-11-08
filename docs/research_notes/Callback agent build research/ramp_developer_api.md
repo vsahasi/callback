@@ -398,9 +398,15 @@ The hosted account MCP is `https://mcp.ramp.com/mcp` (sandbox: `https://demo-mcp
   ```python
   import base64, time, httpx
 
+
   class Ramp:
-      def __init__(self, client_id, client_secret, base="https://demo-api.ramp.com",
-                   scopes="vendors:read vendors:write bills:read bills:write"):
+      def __init__(
+          self,
+          client_id,
+          client_secret,
+          base="https://demo-api.ramp.com",
+          scopes="vendors:read vendors:write bills:read bills:write",
+      ):
           self.base, self.scopes = base, scopes
           self._basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
           self._tok, self._exp = None, 0
@@ -409,49 +415,102 @@ The hosted account MCP is `https://mcp.ramp.com/mcp` (sandbox: `https://demo-mcp
       def token(self):
           if self._tok and time.time() < self._exp - 300:
               return self._tok
-          r = self.http.post("/developer/v1/token",
-                             headers={"Authorization": f"Basic {self._basic}",
-                                      "Content-Type": "application/x-www-form-urlencoded"},
-                             data={"grant_type": "client_credentials", "scope": self.scopes})
-          r.raise_for_status(); j = r.json()
-          self._tok, self._exp = j["access_token"], time.time() + j["expires_in"]  # 864000 s
+          r = self.http.post(
+              "/developer/v1/token",
+              headers={
+                  "Authorization": f"Basic {self._basic}",
+                  "Content-Type": "application/x-www-form-urlencoded",
+              },
+              data={"grant_type": "client_credentials", "scope": self.scopes},
+          )
+          r.raise_for_status()
+          j = r.json()
+          self._tok, self._exp = (
+              j["access_token"],
+              time.time() + j["expires_in"],
+          )  # 864000 s
           return self._tok
 
       def call(self, method, path, **kw):
           h = {"Authorization": f"Bearer {self.token()}", "Accept": "application/json"}
           r = self.http.request(method, path, headers=h, **kw)
           if r.status_code >= 400:
-              err = r.json().get("error_v2", {}) if r.headers.get("content-type","").startswith("application/json") else {}
-              raise RuntimeError(f"{r.status_code} {err.get('error_code')} {err.get('message')} trace={r.headers.get('x-trace-id')}")
+              err = (
+                  r.json().get("error_v2", {})
+                  if r.headers.get("content-type", "").startswith("application/json")
+                  else {}
+              )
+              raise RuntimeError(
+                  f"{r.status_code} {err.get('error_code')} {err.get('message')} trace={r.headers.get('x-trace-id')}"
+              )
           return r
 
       def pages(self, path, **params):
           r = self.call("GET", path, params=params)
           while True:
-              j = r.json(); yield from j["data"]
+              j = r.json()
+              yield from j["data"]
               nxt = j["page"]["next"]
-              if not nxt: break
+              if not nxt:
+                  break
               r = self.call("GET", nxt)  # absolute URL from page.next; cursor is opaque
 
       # tools
-      def vendors(self, **f): return list(self.pages("/developer/v1/vendors", page_size=100, **f))
+      def vendors(self, **f):
+          return list(self.pages("/developer/v1/vendors", page_size=100, **f))
+
       def vendor_accounts(self, vid, pending=False):
-          return list(self.pages(f"/developer/v1/vendors/{vid}/accounts", page_size=100, include_pending=pending))
-      def bills(self, **f): return list(self.pages("/developer/v1/bills", page_size=100, **f))
+          return list(
+              self.pages(
+                  f"/developer/v1/vendors/{vid}/accounts",
+                  page_size=100,
+                  include_pending=pending,
+              )
+          )
+
+      def bills(self, **f):
+          return list(self.pages("/developer/v1/bills", page_size=100, **f))
+
       def hold_vendor(self, vid, reason=None):
-          r = self.call("POST", f"/developer/v1/vendors/{vid}/hold", json={"reason": reason} if reason else None)
-          return {"applied": r.status_code == 204, "pending_approval": r.status_code == 202}
+          r = self.call(
+              "POST",
+              f"/developer/v1/vendors/{vid}/hold",
+              json={"reason": reason} if reason else None,
+          )
+          return {
+              "applied": r.status_code == 204,
+              "pending_approval": r.status_code == 202,
+          }
+
       def release_vendor(self, vid):
           r = self.call("POST", f"/developer/v1/vendors/{vid}/release")
-          return {"applied": r.status_code == 204, "pending_approval": r.status_code == 202}
+          return {
+              "applied": r.status_code == 204,
+              "pending_approval": r.status_code == 202,
+          }
+
       def hold_bill(self, bid, reason=None):
-          return self.call("POST", f"/developer/v1/bills/{bid}/hold", json={"reason": reason} if reason else None).json()
+          return self.call(
+              "POST",
+              f"/developer/v1/bills/{bid}/hold",
+              json={"reason": reason} if reason else None,
+          ).json()
+
       def release_bill(self, bid):
           return self.call("POST", f"/developer/v1/bills/{bid}/release").json()
-      def add_vendor_bank_account(self, vid, routing, account, nickname=None, default=True):
-          body = {"is_default": default, "ach_details": {"routing_number": routing, "account_number": account}}
-          if nickname: body["account_nickname"] = nickname
-          return self.call("POST", f"/developer/v1/vendors/{vid}/update-bank-accounts", json=body).json()
+
+      def add_vendor_bank_account(
+          self, vid, routing, account, nickname=None, default=True
+      ):
+          body = {
+              "is_default": default,
+              "ach_details": {"routing_number": routing, "account_number": account},
+          }
+          if nickname:
+              body["account_nickname"] = nickname
+          return self.call(
+              "POST", f"/developer/v1/vendors/{vid}/update-bank-accounts", json=body
+          ).json()
           # -> {"vendor_id", "status": "approved"|"pending_approval", "payment_method_id", "payment_method_type", "proposal_id"}
   ```
   Note `httpx.Client.request` accepts the absolute `page.next` URL even with a `base_url` set; when `page.next` is used, Ramp returns `https://api.ramp.com/...` in production and (presumably) `https://demo-api.ramp.com/...` in sandbox.

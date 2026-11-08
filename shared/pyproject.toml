@@ -15,3 +15,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/callback_shared"]
+
+# Lint with the repo's root ruff.toml, plus two exceptions for this package only.
+# The contract keeps runtime annotations (no `from __future__ import annotations`),
+# and its tests use compound asserts.
+[tool.ruff]
+extend = "../ruff.toml"
+
+[tool.ruff.lint.per-file-ignores]
+"src/callback_shared/*.py" = ["I002"]
+"tests/*.py" = ["I002", "PT018"]

@@ -59,15 +59,25 @@ disclosure from `Agent.on_enter` with `session.say(..., allow_interruptions=Fals
   ```python
   from dotenv import load_dotenv
   from livekit import agents
-  from livekit.agents import AgentServer, AgentSession, Agent, inference, room_io, TurnHandlingOptions
+  from livekit.agents import (
+      AgentServer,
+      AgentSession,
+      Agent,
+      inference,
+      room_io,
+      TurnHandlingOptions,
+  )
 
   load_dotenv(".env.local")
+
 
   class Assistant(Agent):
       def __init__(self) -> None:
           super().__init__(instructions="You are a helpful voice AI assistant. ...")
 
+
   server = AgentServer()
+
 
   @server.rtc_session(agent_name="my-agent")
   async def my_agent(ctx: agents.JobContext):
@@ -77,9 +87,17 @@ disclosure from `Agent.on_enter` with `session.say(..., allow_interruptions=Fals
           tts=inference.TTS(model="fishaudio/s2.1-pro", voice="..."),
           turn_handling=TurnHandlingOptions(turn_detection=inference.TurnDetector()),
       )
-      await session.start(room=ctx.room, agent=Assistant(),
-                          room_options=room_io.RoomOptions(audio_input=room_io.AudioInputOptions(noise_cancellation=...)))
-      await session.generate_reply(instructions="Greet the user and offer your assistance.")
+      await session.start(
+          room=ctx.room,
+          agent=Assistant(),
+          room_options=room_io.RoomOptions(
+              audio_input=room_io.AudioInputOptions(noise_cancellation=...)
+          ),
+      )
+      await session.generate_reply(
+          instructions="Greet the user and offer your assistance."
+      )
+
 
   if __name__ == "__main__":
       agents.cli.run_app(server)
@@ -112,38 +130,67 @@ disclosure from `Agent.on_enter` with `session.say(..., allow_interruptions=Fals
   import json, logging
   from dotenv import load_dotenv
   from livekit import agents, rtc
-  from livekit.agents import AgentServer, AgentSession, Agent, JobContext, JobProcess, TurnHandlingOptions, room_io
+  from livekit.agents import (
+      AgentServer,
+      AgentSession,
+      Agent,
+      JobContext,
+      JobProcess,
+      TurnHandlingOptions,
+      room_io,
+  )
   from livekit.plugins import deepgram, openai, cartesia, silero
 
   load_dotenv(".env.local")
   server = AgentServer()
 
+
   def prewarm(proc: JobProcess):
       proc.userdata["vad"] = silero.VAD.load()
+
+
   server.setup_fnc = prewarm
+
 
   class Receptionist(Agent):
       def __init__(self, chat_ctx=None):
-          super().__init__(instructions="You are Callback, a bank-style phone assistant ...", chat_ctx=chat_ctx)
+          super().__init__(
+              instructions="You are Callback, a bank-style phone assistant ...",
+              chat_ctx=chat_ctx,
+          )
 
       async def on_enter(self) -> None:
           # (e) recording disclosure on every call, not interruptible
-          await self.session.say("This call is recorded and analyzed for security.", allow_interruptions=False)
-          self.session.generate_reply(instructions="Greet the caller and ask how you can help.")
+          await self.session.say(
+              "This call is recorded and analyzed for security.",
+              allow_interruptions=False,
+          )
+          self.session.generate_reply(
+              instructions="Greet the caller and ask how you can help."
+          )
+
 
   @server.rtc_session(agent_name="callback")
   async def entrypoint(ctx: JobContext):
-      participant = await ctx.wait_for_participant()          # SIP or browser caller; hidden detector is never returned
+      participant = (
+          await ctx.wait_for_participant()
+      )  # SIP or browser caller; hidden detector is never returned
       session = AgentSession[CallState](
           stt=deepgram.STTv2(model="flux-general-en", eager_eot_threshold=0.4),
           llm=openai.LLM(model="gpt-4.1"),
           tts=cartesia.TTS(model="sonic-3", voice="<voice-id>"),
           vad=ctx.proc.userdata["vad"],
-          turn_handling=TurnHandlingOptions(turn_detection="stt"),  # Flux owns end-of-turn
+          turn_handling=TurnHandlingOptions(
+              turn_detection="stt"
+          ),  # Flux owns end-of-turn
           userdata=CallState(call_id=ctx.room.name, caller=participant.identity),
       )
-      await session.start(room=ctx.room, agent=Receptionist(),
-                          room_options=room_io.RoomOptions(participant_identity=participant.identity))
+      await session.start(
+          room=ctx.room,
+          agent=Receptionist(),
+          room_options=room_io.RoomOptions(participant_identity=participant.identity),
+      )
+
 
   if __name__ == "__main__":
       agents.cli.run_app(server)
@@ -173,7 +220,9 @@ visible inside a custom `Agent.stt_node`; `user_input_transcribed` and `conversa
 - Source event mapping (Flux `TurnInfo.event` -> `SpeechEventType`): `StartOfTurn` -> `START_OF_SPEECH` then `INTERIM_TRANSCRIPT` (only if not already speaking); `Update` -> `INTERIM_TRANSCRIPT`; `EagerEndOfTurn` -> `PREFLIGHT_TRANSCRIPT`; `TurnResumed` -> `INTERIM_TRANSCRIPT`; `EndOfTurn` -> `FINAL_TRANSCRIPT` then `END_OF_SPEECH` (the END_OF_SPEECH copy gets `end_time` = offset + last word's `end`); `Error` raises `APIStatusError`; `ConfigureSuccess/Failure` only logged; `RECOGNITION_USAGE` emitted periodically; only `eager_eot_threshold/eot_threshold/eot_timeout_ms` are sent to Deepgram when given — [stt_v2.py](https://github.com/livekit/agents/blob/livekit-agents@1.8.10/livekit-plugins/livekit-plugins-deepgram/livekit/plugins/deepgram/stt_v2.py)
 - Source, words are kept (verbatim):
   ```python
-  def _parse_transcription(language: str, data: dict[str, Any], start_time_offset: float) -> list[stt.SpeechData]:
+  def _parse_transcription(
+      language: str, data: dict[str, Any], start_time_offset: float
+  ) -> list[stt.SpeechData]:
       transcript = data.get("transcript")
       words = data.get("words")
       if not words:
@@ -218,31 +267,45 @@ visible inside a custom `Agent.stt_node`; `user_input_transcribed` and `conversa
   from livekit import rtc
   from livekit.agents import Agent, ModelSettings, stt
 
+
   class Receptionist(Agent):
-      async def stt_node(self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
-                         ) -> Optional[AsyncIterable[stt.SpeechEvent]]:
+      async def stt_node(
+          self, audio: AsyncIterable[rtc.AudioFrame], model_settings: ModelSettings
+      ) -> Optional[AsyncIterable[stt.SpeechEvent]]:
           anchor: dict[str, float] = {}
 
           async def tapped() -> AsyncIterable[rtc.AudioFrame]:
               async for frame in audio:
                   if "t0" not in anchor:
-                      anchor["t0"] = time.time() - frame.duration   # same rule as audio_recognition.py:807
+                      anchor["t0"] = (
+                          time.time() - frame.duration
+                      )  # same rule as audio_recognition.py:807
                   yield frame
 
           async def events():
               async for ev in Agent.default.stt_node(self, tapped(), model_settings):
                   if ev.type == stt.SpeechEventType.FINAL_TRANSCRIPT and ev.alternatives:
                       sd = ev.alternatives[0]
-                      t0 = anchor.get("t0", ev.created_at - sd.end_time)   # fallback if no frame seen
-                      words = [{"w": str(w), "start_ms": round((t0 + w.start_time) * 1000),
-                                "end_ms": round((t0 + w.end_time) * 1000), "conf": w.confidence}
-                               for w in (sd.words or [])]
+                      t0 = anchor.get(
+                          "t0", ev.created_at - sd.end_time
+                      )  # fallback if no frame seen
+                      words = [
+                          {
+                              "w": str(w),
+                              "start_ms": round((t0 + w.start_time) * 1000),
+                              "end_ms": round((t0 + w.end_time) * 1000),
+                              "conf": w.confidence,
+                          }
+                          for w in (sd.words or [])
+                      ]
                       self.session.userdata.pending_caller_turn = {
-                          "text": sd.text, "words": words,
+                          "text": sd.text,
+                          "words": words,
                           "start_ms": round((t0 + sd.start_time) * 1000),
                           "end_ms": round((t0 + sd.end_time) * 1000),
                       }
                   yield ev
+
           return events()
   ```
   Because `word.start_time` already includes `start_time_offset`, this stays correct across Deepgram reconnects. Sanity check: `t0 + sd.end_time <= ev.created_at` should always hold (the framework applies the same check).
@@ -281,30 +344,51 @@ stopped_speaking_at`.
 ### Inferences
 - Minimal event wiring for requirement (b) (all names verified):
   ```python
-  from livekit.agents import AgentStateChangedEvent, UserStateChangedEvent, ConversationItemAddedEvent, SpeechCreatedEvent
+  from livekit.agents import (
+      AgentStateChangedEvent,
+      UserStateChangedEvent,
+      ConversationItemAddedEvent,
+      SpeechCreatedEvent,
+  )
   from livekit.agents.llm import ChatMessage
+
 
   @session.on("agent_state_changed")
   def _on_agent_state(ev: AgentStateChangedEvent):
       ms = round(ev.created_at * 1000)
-      if ev.new_state == "speaking":  publish({"type": "agent_speech_start", "t_ms": ms})
-      elif ev.old_state == "speaking": publish({"type": "agent_speech_end", "t_ms": ms})
+      if ev.new_state == "speaking":
+          publish({"type": "agent_speech_start", "t_ms": ms})
+      elif ev.old_state == "speaking":
+          publish({"type": "agent_speech_end", "t_ms": ms})
+
 
   @session.on("user_state_changed")
   def _on_user_state(ev: UserStateChangedEvent):
       if ev.new_state == "speaking":
-          publish({"type": "user_speech_start", "t_ms": round(ev.created_at * 1000),
-                   "agent_was_speaking": session.agent_state == "speaking"})
+          publish(
+              {
+                  "type": "user_speech_start",
+                  "t_ms": round(ev.created_at * 1000),
+                  "agent_was_speaking": session.agent_state == "speaking",
+              }
+          )
+
 
   @session.on("conversation_item_added")
   def _on_item(ev: ConversationItemAddedEvent):
       item = ev.item
       if isinstance(item, ChatMessage) and item.role == "assistant":
           m = item.metrics
-          publish({"type": "turn", "speaker": "agent", "text": item.text_content,
-                   "start_ms": round(m.get("started_speaking_at", item.created_at) * 1000),
-                   "end_ms": round(m.get("stopped_speaking_at", ev.created_at) * 1000),
-                   "interrupted": item.interrupted})
+          publish(
+              {
+                  "type": "turn",
+                  "speaker": "agent",
+                  "text": item.text_content,
+                  "start_ms": round(m.get("started_speaking_at", item.created_at) * 1000),
+                  "end_ms": round(m.get("stopped_speaking_at", ev.created_at) * 1000),
+                  "interrupted": item.interrupted,
+              }
+          )
   ```
   `publish` must be fire-and-forget from these sync callbacks (e.g. `asyncio.create_task(room.local_participant.publish_data(...))`).
 - "Did the caller interrupt the agent?" for the caller turn: `True` if the assistant item immediately before it has `interrupted=True`, or if `session.agent_state == "speaking"` when `user_state_changed -> speaking` fired. `AgentFalseInterruptionEvent.resumed` tells you the interruption was judged false (backchannel) and speech resumed.
@@ -329,9 +413,12 @@ expose them as LLM tools at all, or restrict per reply with `generate_reply(tool
   ```python
   from livekit.agents import function_tool, Agent, RunContext
 
+
   class MyAgent(Agent):
       @function_tool()
-      async def lookup_weather(self, context: RunContext, location: str) -> dict[str, Any]:
+      async def lookup_weather(
+          self, context: RunContext, location: str
+      ) -> dict[str, Any]:
           """Look up weather information for a given location.
 
           Args:
@@ -354,21 +441,30 @@ expose them as LLM tools at all, or restrict per reply with `generate_reply(tool
   from livekit.agents import function_tool, RunContext
   from livekit.agents.llm import ToolError
 
+
   class Receptionist(Agent):
       @function_tool()
-      async def request_sensitive_action(self, ctx: RunContext[CallState], action: str, details: str) -> str:
+      async def request_sensitive_action(
+          self, ctx: RunContext[CallState], action: str, details: str
+      ) -> str:
           """Request a sensitive account action (card reissue, limit change, payee add). Requires verification.
 
           Args:
               action: One of card_reissue, limit_change, add_payee.
               details: Any parameters the caller gave.
           """
-          ctx.disallow_interruptions()                      # don't let barge-in cancel the gate
+          ctx.disallow_interruptions()  # don't let barge-in cancel the gate
           async with ctx.with_filler("One moment while I verify that.", delay=0.5):
-              verdict = await detector_authorize(ctx.userdata.call_id, action)   # HTTP to Eric's /authorize, may take seconds
+              verdict = await detector_authorize(
+                  ctx.userdata.call_id, action
+              )  # HTTP to Eric's /authorize, may take seconds
           if not verdict.allowed:
-              raise ToolError(f"Verification failed ({verdict.reason}). Do not perform {action}; offer the secure callback flow.")
-          result = await ramp_client.perform(action, details)   # the write happens in Python, never via an LLM-visible tool
+              raise ToolError(
+                  f"Verification failed ({verdict.reason}). Do not perform {action}; offer the secure callback flow."
+              )
+          result = await ramp_client.perform(
+              action, details
+          )  # the write happens in Python, never via an LLM-visible tool
           return f"Verified. {action} completed: {result}"
   ```
   The LLM sees exactly one tool for the whole class of sensitive actions; the Ramp SDK call is not a tool, so there is nothing to bypass. If you also want the LLM to narrate progress, `await ctx.update("Verification in progress")` makes it speak from the LLM while the tool continues; `with_filler` is the cheaper, deterministic "one moment" line.
@@ -392,11 +488,16 @@ in the JSON payload. Send turns with `await ctx.room.local_participant.publish_d
   ```python
   @room.on("data_received")
   def on_data_received(data: rtc.DataPacket):
-    logging.info("received data from %s: %s", data.participant.identity, data.data)
+      logging.info("received data from %s: %s", data.participant.identity, data.data)
+
 
   # string payload will be encoded to bytes with UTF-8
-  await room.local_participant \
-    .publish_data("my payload", reliable=True, destination_identities=["identity1", "identity2"], topic="topic1")
+  await room.local_participant.publish_data(
+      "my payload",
+      reliable=True,
+      destination_identities=["identity1", "identity2"],
+      topic="topic1",
+  )
   ```
   Reliable: "each packet can be up to 15KiB in size", in-order, retransmitted, but best-effort (not buffered server-side; a receiver disconnected at send time never gets it); lossy: keep under ~1300 bytes; topics are free-form strings — [Data packets](https://docs.livekit.io/home/client/data/packets.md)
 - Python SDK: `DataPacket(data: bytes, kind: proto_room.DataPacketKind.ValueType, participant: RemoteParticipant | None, topic: str | None = None)`; the docstring says `participant` is `None` when a server SDK sent it; the handler resolves the sender with `self._remote_participants.get(identity, None)` and emits `data_received` without a None check; `LocalParticipant.publish_data(payload: bytes | str, *, reliable: bool = True, destination_identities: list[str] = [], topic: str = "")`; also `send_text(text, *, topic=...)`, `register_text_stream_handler(topic, handler)` / `register_byte_stream_handler(topic, handler)` (one handler per topic, else `ValueError`); room events include `participant_connected, participant_disconnected, participant_attributes_changed, track_subscribed, data_received, sip_dtmf_received, connected, disconnected, reconnecting, reconnected` — [room.py](https://github.com/livekit/python-sdks/blob/main/livekit-rtc/livekit/rtc/room.py) (DataPacket at line 138 in the installed 1.1.21), [participant.py](https://github.com/livekit/python-sdks/blob/main/livekit-rtc/livekit/rtc/participant.py), local test log
@@ -414,7 +515,9 @@ in the JSON payload. Send turns with `await ctx.room.local_participant.publish_d
   def _on_data(pkt: rtc.DataPacket):
       if pkt.topic != "risk":
           return
-      update = json.loads(pkt.data)             # sender identity should be inside the payload; pkt.participant is None for hidden senders
+      update = json.loads(
+          pkt.data
+      )  # sender identity should be inside the payload; pkt.participant is None for hidden senders
       session.userdata.risk = update
   ```
 - Eric's detector token should carry `VideoGrants(room_join=True, room=<room>, hidden=True, can_subscribe=True, can_publish=False, can_publish_data=True)`; because hidden participants are invisible to RoomIO, the detector can never be mistaken for the caller, and `ctx.wait_for_participant()` will not return it. If Eric decides not to use `hidden`, pin the caller with `room_io.RoomOptions(participant_identity=participant.identity)` (and for phone-only, `participant_kinds=[rtc.ParticipantKind.PARTICIPANT_KIND_SIP]`).
@@ -436,7 +539,7 @@ A phone caller is `participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP`
 - SIP participant attributes: `sip.callID` (LiveKit's SIP call ID), `sip.callIDFull` (provider's globally unique SIP call ID), `sip.callStatus` (`active`, `automation`, `dialing`, `hangup`, `ringing`), `sip.phoneNumber` (caller's number for inbound; absent if `HidePhoneNumber` is set in the dispatch rule), `sip.ruleID`, `sip.trunkID`, `sip.trunkPhoneNumber`, `sip.twilio.accountSid` / `sip.twilio.callSid` (Twilio trunks only); custom attributes via the dispatch rule or trunk `headers_to_attributes` (header-based ones arrive asynchronously); Python check (verbatim):
   ```python
   if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-      if participant.attributes['sip.phoneNumber'] == '+15105550100':
+      if participant.attributes["sip.phoneNumber"] == "+15105550100":
           logger.info("Caller phone number is +1-510-555-0100")
   ```
   — [SIP participant](https://docs.livekit.io/sip/sip-participant.md)
@@ -524,35 +627,55 @@ Shared per-call state lives in `AgentSession[CallState](userdata=...)` and is re
   from livekit.agents import Agent, ChatContext, function_tool, RunContext
   from livekit.agents.llm import ChatMessage, StopResponse
 
-  PHRASES = ["My voice is my password", ...]   # 7 prompted phrases
+  PHRASES = ["My voice is my password", ...]  # 7 prompted phrases
+
 
   class EnrollmentAgent(Agent):
       def __init__(self, chat_ctx=None):
-          super().__init__(instructions="You are running voice enrollment. Do not chat.", chat_ctx=chat_ctx,
-                           tools=[],                                   # no Ramp tools visible here
-                           turn_handling=TurnHandlingOptions(turn_detection="stt"))
+          super().__init__(
+              instructions="You are running voice enrollment. Do not chat.",
+              chat_ctx=chat_ctx,
+              tools=[],  # no Ramp tools visible here
+              turn_handling=TurnHandlingOptions(turn_detection="stt"),
+          )
           self.idx = 0
 
       async def on_enter(self):
-          await self.session.say("To enroll your voice, I need your consent. ... Say yes to continue.", allow_interruptions=False)
+          await self.session.say(
+              "To enroll your voice, I need your consent. ... Say yes to continue.",
+              allow_interruptions=False,
+          )
 
-      async def on_user_turn_completed(self, turn_ctx: ChatContext, new_message: ChatMessage):
+      async def on_user_turn_completed(
+          self, turn_ctx: ChatContext, new_message: ChatMessage
+      ):
           st = self.session.userdata
           text = (new_message.text_content or "").lower()
           if not st.consented:
               if "yes" not in text:
-                  await self.session.say("No problem. Returning to your call.", allow_interruptions=False)
-                  self.session.update_agent(Receptionist(chat_ctx=self.chat_ctx)); raise StopResponse()
+                  await self.session.say(
+                      "No problem. Returning to your call.", allow_interruptions=False
+                  )
+                  self.session.update_agent(Receptionist(chat_ctx=self.chat_ctx))
+                  raise StopResponse()
               st.consented = True
           else:
-              st.enrollment_samples.append(st.pending_caller_turn)       # text + word ms from stt_node
+              st.enrollment_samples.append(
+                  st.pending_caller_turn
+              )  # text + word ms from stt_node
               self.idx += 1
           if self.idx < len(PHRASES):
-              await self.session.say(f"Please repeat: {PHRASES[self.idx]}", allow_interruptions=False)
+              await self.session.say(
+                  f"Please repeat: {PHRASES[self.idx]}", allow_interruptions=False
+              )
           else:
-              await self.session.say("Enrollment complete. Returning to your call.", allow_interruptions=False)
+              await self.session.say(
+                  "Enrollment complete. Returning to your call.",
+                  allow_interruptions=False,
+              )
               self.session.update_agent(Receptionist(chat_ctx=self.chat_ctx))
-          raise StopResponse()   # never let the LLM answer during enrollment
+          raise StopResponse()  # never let the LLM answer during enrollment
+
 
   class Receptionist(Agent):
       @function_tool()
