@@ -51,7 +51,7 @@ def directory(doc: dict[str, object]) -> UserDirectory:
 # ------------------------------------------------------------ the file
 
 
-def test_the_example_file_is_the_ruling_example() -> None:
+def test_the_example_file_is_the_ruling_example_plus_aliases() -> None:
     text = (REPO_ROOT / "users_on_file.example.json").read_text(encoding="utf-8")
     assert json.loads(text) == EXAMPLE_USERS
     loaded = UserDirectory.from_json_text(text)
@@ -240,3 +240,13 @@ async def test_a_lookup_leaves_no_name_or_number_in_the_log(
     assert text  # something was logged
     for needle in ("Eric", "Catalano", "+15555550100", "5555550100"):
         assert needle not in text, needle
+
+
+@pytest.mark.parametrize(
+    "heard",
+    ["Erik Catalano", "Eric Catalono", "erik catalono", "Eric Catalano."],
+)
+def test_the_example_file_carries_likely_stt_spellings(heard: str) -> None:
+    text = (REPO_ROOT / "users_on_file.example.json").read_text(encoding="utf-8")
+    found = UserDirectory.from_json_text(text).search(heard)
+    assert [u.user_id for u in found] == ["u_eric"]

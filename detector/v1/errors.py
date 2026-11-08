@@ -145,6 +145,15 @@ class OtpRateLimited(V1Error):
     default_message = "too many code sends or checks in this session"
 
 
+class TooManyChallenges(V1Error):
+    # Not in callback_shared's ErrorCode: ErrorBody.code is a plain str, so a
+    # new code is not a contract break. The agent treats any non-2xx as a
+    # failed step-up and takes the deny path.
+    http_status = 429
+    code = "too_many_challenges"
+    default_message = "this session has issued its limit of challenges"
+
+
 # --------------------------------------------------------------------- 5xx
 
 

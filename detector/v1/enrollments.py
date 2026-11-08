@@ -121,12 +121,18 @@ class ConsentRow:
     verbatim: str | None = field(default=None, repr=False)
 
 
-class ConsentLog:
-    """Append-only. A record, never an application log line."""
+# Any user_id can be revoked, so revoke rows are bounded: past this many, the
+# oldest revoke row goes. Consent rows are never dropped.
+MAX_REVOKE_ROWS = 1000
 
-    def __init__(self) -> None:
+
+class ConsentLog:
+    """Append-only, except that old revoke rows age out. Never a log line."""
+
+    def __init__(self, *, max_revokes: int = MAX_REVOKE_ROWS) -> None:
         self._rows: list[ConsentRow] = []
         self._lock = threading.Lock()
+        self.max_revokes = max_revokes
 
     def append_consent(
         self,
@@ -159,6 +165,9 @@ class ConsentLog:
         )
         with self._lock:
             self._rows.append(row)
+            revokes = [i for i, r in enumerate(self._rows) if r.kind == "revoke"]
+            for index in reversed(revokes[: max(0, len(revokes) - self.max_revokes)]):
+                del self._rows[index]
         return row
 
     def rows(self) -> tuple[ConsentRow, ...]:

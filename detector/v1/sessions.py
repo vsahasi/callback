@@ -47,10 +47,17 @@ MAX_SESSION_AGE_S = 30 * 60
 IDLE_LIMIT_S = 10 * 60
 EVICT_AFTER_END_S = 60 * 60
 MAX_TURNS = 200
+# Per turn, checked at the route. A minute of speech is a few hundred words.
+MAX_TURN_TEXT_CHARS = 4000
+MAX_TURN_WORDS = 400
+MAX_WORD_CHARS = 64
 MAX_EVENTS = 500
 # The idempotency cache per session. A real call makes a handful of
 # authorize requests; this only bounds a misbehaving client.
 MAX_CACHED_DECISIONS = 256
+# What the review surface can list per session: decisions and factor reports.
+MAX_DECISION_HISTORY = 256
+MAX_FACTOR_HISTORY = 64
 
 
 def new_session_id() -> str:
@@ -96,6 +103,15 @@ class CachedDecision:
 
 
 @dataclass
+class DecisionRecord:
+    """One fresh authorize answer, for the review surface. Replays add none."""
+
+    at: float
+    idempotency_key: str
+    decision: Decision
+
+
+@dataclass
 class V1Session:
     # ids and claim
     session_id: str
@@ -130,6 +146,10 @@ class V1Session:
     decisions: OrderedDict[str, CachedDecision] = field(default_factory=OrderedDict)
     pending_bind: str | None = None
     enrollment: EnrollmentRecord | None = None
+    # Read by the review surface only: every fresh decision, oldest first, and
+    # every factor report. Kept after /end, like decisions and reason codes.
+    history: list[DecisionRecord] = field(default_factory=list)
+    factor_history: list[CallbackRecord] = field(default_factory=list)
 
     @property
     def ended(self) -> bool:
@@ -150,8 +170,12 @@ class SessionRegistry:
         max_age_s: float = MAX_SESSION_AGE_S,
         idle_limit_s: float = IDLE_LIMIT_S,
         evict_after_s: float = EVICT_AFTER_END_S,
+        on_evict: Callable[[V1Session], None] | None = None,
     ) -> None:
         self.clock = clock
+        # Called once per evicted session, so state kept outside the session
+        # (completed enrollments) goes with it.
+        self.on_evict = on_evict
         self.max_live = max_live
         self.max_age_s = max_age_s
         self.idle_limit_s = idle_limit_s
@@ -179,9 +203,11 @@ class SessionRegistry:
             session.ended_at is not None
             and now >= session.ended_at + self.evict_after_s
         ):
-            self._sessions.pop(session.session_id, None)
+            evicted = self._sessions.pop(session.session_id, None)
             if self._live_by_room.get(session.room) == session.session_id:
                 del self._live_by_room[session.room]
+            if evicted is not None and self.on_evict is not None:
+                self.on_evict(evicted)
             return True
         return False
 
@@ -275,6 +301,12 @@ class SessionRegistry:
             raise SessionEnded()
         session.last_call_at = self.now()
         return session
+
+    def sessions(self) -> list[V1Session]:
+        """Every session not yet evicted, after an expiry sweep. Read only."""
+
+        self.sweep()
+        return list(self._sessions.values())
 
     def __len__(self) -> int:
         return len(self._sessions)

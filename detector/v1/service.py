@@ -13,11 +13,13 @@ room or a raw caller identity.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Callable
 from typing import Any
 
 from callback_shared.contract import (
+    ACTION_TIER,
     AUTHORIZE_SERVER_DEADLINE_S,
     AuthorizeRequest,
     CallerUpdate,
@@ -50,6 +52,7 @@ from detector.enrolment import VoicePrintStore
 from detector.mock import jitter_seconds
 from detector.observability import StructuredLogger
 from detector.v1.challenges import (
+    MAX_CHALLENGES_PER_SESSION,
     VERIFICATION_KINDS,
     ChallengeRecord,
     make_say,
@@ -76,6 +79,7 @@ from detector.v1.errors import (
     SessionLocked,
     SessionNotFound,
     SmsFailed,
+    TooManyChallenges,
     UserNotFound,
     V1Error,
 )
@@ -88,6 +92,7 @@ from detector.v1.policy import (
     binding_key,
     evaluate,
     internal_timeout_verdict,
+    tier0_verdict,
 )
 from detector.v1.scenarios import (
     DEEPFAKE_WINDOWS,
@@ -99,9 +104,12 @@ from detector.v1.scenarios import (
 )
 from detector.v1.sessions import (
     MAX_CACHED_DECISIONS,
+    MAX_DECISION_HISTORY,
+    MAX_FACTOR_HISTORY,
     MAX_TURNS,
     CachedDecision,
     CallbackRecord,
+    DecisionRecord,
     SessionRegistry,
     TurnRecord,
     V1Session,
@@ -153,7 +161,7 @@ class V1Service:
             if directory is not None
             else UserDirectory.from_settings(settings)
         )
-        self.registry = SessionRegistry(self.clock)
+        self.registry = SessionRegistry(self.clock, on_evict=self._forget_session)
         self.consents = ConsentLog()
         self.enrollments: dict[str, EnrollmentRecord] = {}
         self.otp: OtpBackend = (
@@ -286,8 +294,11 @@ class V1Service:
 
     def report_factor(self, session_id: str, report: FactorReport) -> None:
         session = self.registry.get(session_id)
-        # The latest report wins.
-        session.callback = CallbackRecord(result=report.result, at=self.registry.now())
+        # The latest report wins. Every report is kept for the review surface.
+        record = CallbackRecord(result=report.result, at=self.registry.now())
+        session.callback = record
+        session.factor_history.append(record)
+        del session.factor_history[:-MAX_FACTOR_HISTORY]
         self.log(
             "v1_factor_reported",
             session_id=session.session_id,
@@ -314,6 +325,8 @@ class V1Service:
         session = self.registry.get(session_id)
         if session.locked_code is not None:
             raise SessionLocked()
+        if len(session.challenges) >= MAX_CHALLENGES_PER_SESSION:
+            raise TooManyChallenges()
         now = self.registry.now()
         enroll_prompt = (
             self._enroll_prompt(session, now) if kind is ChallengeKind.ENROLL else None
@@ -383,9 +396,14 @@ class V1Service:
         if record.send_times and now - record.send_times[-1] < OTP_SEND_INTERVAL_S:
             raise OtpRateLimited(detail="at most 1 send per 30 s")
         phone = self._phone_on_file(session)
+        # Reserve the slot before awaiting the provider, so a second send that
+        # arrives while Twilio is answering sees it and is refused. A send that
+        # failed releases it: only a code that went out counts.
+        record.send_times.append(now)
         try:
             await self.otp.send(phone)
         except SmsFailed:
+            record.send_times.remove(now)
             self.log(
                 "v1_sms_failed",
                 level="warning",
@@ -393,8 +411,6 @@ class V1Service:
                 step="send",
             )
             raise
-        # Only a send that went out counts toward the limits.
-        record.send_times.append(now)
         self.log(
             "v1_otp_sent", session_id=session.session_id, sends=len(record.send_times)
         )
@@ -512,6 +528,8 @@ class V1Service:
         cached = self._cached(session, req.idempotency_key, fingerprint)
         if cached is not None:
             return cached  # a replay: no jitter, no new evaluation
+        if ACTION_TIER[req.action] == 0:
+            return self._answer_hold(session, req, fingerprint)
         try:
             async with asyncio.timeout(self.authorize_deadline_s):
                 await self.jitter()
@@ -523,10 +541,58 @@ class V1Service:
                     raise SessionEnded()
                 now = self.registry.now()
                 verdict = evaluate(self.view(session, now), req, now)
+                self._apply(session, req.idempotency_key, fingerprint, verdict)
+                return verdict.decision
         except V1Error:
             raise
         # Any failure at all denies (fail closed): TimeoutError past the
-        # deadline, and any bug in the policy.
+        # deadline, a bug in the policy, or a bug while recording the answer.
+        except Exception as exc:  # noqa: BLE001
+            return self._fail_closed(session, req, fingerprint, exc)
+
+    def _fail_closed(
+        self,
+        session: V1Session,
+        req: AuthorizeRequest,
+        fingerprint: str,
+        exc: Exception,
+    ) -> WireDecision:
+        """The section 2.10 deny: 200, reasons ["internal_timeout"], locked."""
+
+        verdict = internal_timeout_verdict(session.session_id, req.action)
+        # The lock first, so it holds even if the bookkeeping below fails.
+        if session.locked_code is None:
+            session.locked_code = verdict.lock_code
+        # An answer half recorded before the failure never went out.
+        if (
+            session.history
+            and session.history[-1].idempotency_key == req.idempotency_key
+        ):
+            session.history.pop()
+        with contextlib.suppress(Exception):
+            self.log(
+                "v1_authorize_failed",
+                level="error",
+                session_id=session.session_id,
+                action=req.action.value,
+                exception=type(exc).__name__,
+            )
+        with contextlib.suppress(Exception):
+            self._apply(session, req.idempotency_key, fingerprint, verdict)
+        return verdict.decision
+
+    def _answer_hold(
+        self, session: V1Session, req: AuthorizeRequest, fingerprint: str
+    ) -> WireDecision:
+        """Rule 1: a hold is always allowed, so it is answered at once.
+
+        No jitter and no deadline, so it can never time out, and no failure
+        can turn it into a deny or lock the session.
+        """
+
+        now = self.registry.now()
+        try:
+            verdict = evaluate(self.view(session, now), req, now)
         except Exception as exc:  # noqa: BLE001
             self.log(
                 "v1_authorize_failed",
@@ -535,8 +601,10 @@ class V1Service:
                 action=req.action.value,
                 exception=type(exc).__name__,
             )
-            verdict = internal_timeout_verdict(session.session_id, req.action)
-        self._apply(session, req.idempotency_key, fingerprint, verdict)
+            verdict = tier0_verdict(session.session_id, req.action)
+        # Recording it can fail too; the hold is allowed regardless.
+        with contextlib.suppress(Exception):
+            self._apply(session, req.idempotency_key, fingerprint, verdict)
         return verdict.decision
 
     def _apply(
@@ -547,7 +615,13 @@ class V1Service:
         verdict: Verdict,
     ) -> None:
         decision = verdict.decision
-        if verdict.lock_code is not None and session.locked_code is None:
+        holding = ACTION_TIER[decision.action] == 0
+        # A tier 0 answer never locks a session, whatever it carries.
+        if (
+            verdict.lock_code is not None
+            and session.locked_code is None
+            and not holding
+        ):
             session.locked_code = verdict.lock_code
         if verdict.set_pending_bind:
             session.pending_bind = verdict.pending_bind
@@ -560,6 +634,14 @@ class V1Service:
         )
         while len(session.decisions) > MAX_CACHED_DECISIONS:
             session.decisions.popitem(last=False)
+        session.history.append(
+            DecisionRecord(
+                at=self.registry.now(),
+                idempotency_key=idempotency_key,
+                decision=decision,
+            )
+        )
+        del session.history[:-MAX_DECISION_HISTORY]
         # The optional detector log line (ruling C20): codes and numbers only.
         # Never the params or the Ramp context.
         self.log(
@@ -650,6 +732,16 @@ class V1Service:
             prompts_passed=result.prompts_passed,
         )
         return result
+
+    def _forget_session(self, session: V1Session) -> None:
+        """An evicted session takes its enrollments, completed ones too."""
+
+        for enrollment_id in [
+            eid
+            for eid, record in self.enrollments.items()
+            if record.session_id == session.session_id
+        ]:
+            del self.enrollments[enrollment_id]
 
     def delete_enrollment(self, user_id: str) -> None:
         erased = 0

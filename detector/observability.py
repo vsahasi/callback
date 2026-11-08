@@ -1160,6 +1160,7 @@ BASE_ENDPOINTS: frozenset[str] = frozenset(
 UNMATCHED_ENDPOINT = "/unmatched"
 
 _SESSION_SEGMENT = "/api/sessions/"
+_V1_REVIEW_SEGMENT = "/api/v1/sessions/"
 
 #: The agent contract's routes (callback_shared 1.1.0, detector/v1). create_app
 #: registers them as known endpoints. Ids in a /v1 path collapse to these
@@ -1243,13 +1244,17 @@ def normalise_endpoint(path: str, known: frozenset[str] = BASE_ENDPOINTS) -> str
         return trimmed
     if trimmed.startswith("/factors/"):
         return "/factors/{session_id}"
-    index = trimmed.find(_SESSION_SEGMENT)
-    if index != -1:
-        tail = trimmed[index + len(_SESSION_SEGMENT) :]
+    # The review routes: /review/api/sessions/{id}... and, for the /v1
+    # registry, /review/api/v1/sessions/{id}.
+    for segment in (_SESSION_SEGMENT, _V1_REVIEW_SEGMENT):
+        index = trimmed.find(segment)
+        if index == -1:
+            continue
+        tail = trimmed[index + len(segment) :]
         if tail:
             parts = tail.split("/", 1)
             suffix = f"/{parts[1]}" if len(parts) > 1 and parts[1] else ""
-            candidate = trimmed[:index] + _SESSION_SEGMENT + "{session_id}" + suffix
+            candidate = trimmed[:index] + segment + "{session_id}" + suffix
             if candidate in known:
                 return candidate
     return UNMATCHED_ENDPOINT

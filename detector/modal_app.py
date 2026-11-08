@@ -116,6 +116,12 @@ app = modal.App("callback-detector")
     max_containers=1,
     timeout=60 * 10,
 )
+# One container, but many requests at once: without this Modal hands the
+# container one input at a time, so turn posts, challenge polls, authorize and
+# the review dashboard would queue behind each other, and the 2.2 s authorize
+# deadline does not count time in that queue. Safe on one container: all /v1
+# state is touched on one event loop.
+@modal.concurrent(max_inputs=32)
 @modal.asgi_app()
 def fastapi_app():
     """Serve the detector in mock mode."""

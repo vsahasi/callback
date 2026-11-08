@@ -46,9 +46,9 @@ echoes an input value.
 | 2 | `GET /v1/users/{user_id}` | 200 `UserOnFile`, 404 `user_not_found` |
 | 3 | `POST /v1/sessions` (+ `X-Callback-Scenario`) | 200 `SessionCreated`; 404, 409 `session_conflict`, 503 `too_many_sessions`, 400 `invalid_scenario` |
 | 4 | `POST /v1/sessions/{id}/caller` | 204 |
-| 5 | `POST /v1/sessions/{id}/turns` | 204, duplicates dropped |
+| 5 | `POST /v1/sessions/{id}/turns` | 204, duplicates dropped; 422 `validation_error` past 4000 characters of text, 400 words or 64 characters in a word |
 | 6 | `POST /v1/sessions/{id}/events` | 204 |
-| 7 | `POST /v1/sessions/{id}/challenges` | 200 `ChallengeIssued`; 409 `session_locked`, `no_open_enrollment` |
+| 7 | `POST /v1/sessions/{id}/challenges` | 200 `ChallengeIssued`; 409 `session_locked`, `no_open_enrollment`; 429 `too_many_challenges` past 50 in a session |
 | 8 | `GET /v1/sessions/{id}/challenges/{cid}` | 200 `ChallengeStatus`; 404 `challenge_not_found` |
 | 9 | `POST /v1/sessions/{id}/otp/send` | 200 `OtpSent`; 409, 429, 502 `sms_failed`, 503 `otp_unavailable` |
 | 10 | `POST /v1/sessions/{id}/otp/check` | 200 `OtpCheckResult`; 409 `otp_not_sent`, 429 |
@@ -138,11 +138,34 @@ query or any query string, consent text, the Ramp context, and raw room or
 caller identities (logged as a per-process HMAC tag). `tests/v1/test_log_hygiene.py`
 runs Call 1 and an enrollment with sentinel values and checks the stream.
 
+### Reviewing `/v1` calls
+
+The review surface also shows calls made over `/v1`, read only and outside the
+wire contract, behind the same token guard as the rest of `/review` (bearer or
+basic). `GET /review/api/v1/sessions` lists up to 50 sessions, newest first,
+each with its scenario, claimed user id, channel, last decision, action and
+reasons (tier 1 and 2 answers only, so a denied call that ends on a background
+hold still lists as denied), and whether it is locked or ended. `GET /review/api/v1/sessions/{id}`
+adds every fresh authorize answer (oldest first, with the Decision's own
+`signals` object, its tier and its idempotency key), the challenges (state and
+scores, never the phrase), the OTP state (sent, the last four of the number on
+file, attempts, verified; never the code), the callback reports, and the
+speech-event types. All times are ISO 8601 UTC. Nothing it returns holds caller
+words, a challenge phrase, a code, a name, or a full phone or bank number.
+Reading a session does not count as a `/v1` call, so it never keeps one alive,
+and an ended session lists no speech events because `/end` drops them. An
+unknown id is a 404 `session_not_found`.
+
 ### Deploy
 
 1. Create the Modal secret `callback-detector` with `DETECTOR_TOKEN` (the same
    value as the agent's), `USERS_ON_FILE_JSON` holding the real number, and
    `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`.
+   Give every user in `USERS_ON_FILE_JSON` `aliases` for how speech-to-text
+   may spell their name ("Erik Catalano", "Eric Catalono", and so on, as in
+   `users_on_file.example.json`). Name search is an exact match after
+   normalising, so a spelling that is not listed finds nobody and the call
+   stalls at identification.
 2. `uv run --extra deploy python scripts/modal_preflight.py`, then
    `modal deploy detector/modal_app.py`.
 3. Send the URL to the agent side as `DETECTOR_URL`.
