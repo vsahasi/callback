@@ -25,6 +25,9 @@ from callback_shared.contract import (
     CONTRACT_VERSION_HEADER,
     SCENARIO_HEADER,
     CallerUpdate,
+    ChallengeCreate,
+    ChallengeIssued,
+    ChallengeStatus,
     FactorReport,
     SessionCreate,
     SessionCreated,
@@ -165,6 +168,23 @@ def build_v1_router(
     async def post_event(session_id: str, body: SpeechEvent) -> Response:
         service.add_event(session_id, body)  # no jitter
         return _no_content()
+
+    # ------------------------------------------------- 7, 8: challenges
+
+    @router.post("/sessions/{session_id}/challenges", response_model=ChallengeIssued)
+    async def create_challenge(
+        session_id: str, body: ChallengeCreate
+    ) -> ChallengeIssued:
+        await service.jitter()
+        return service.create_challenge(session_id, body.kind)
+
+    @router.get(
+        "/sessions/{session_id}/challenges/{challenge_id}",
+        response_model=ChallengeStatus,
+    )
+    async def get_challenge(session_id: str, challenge_id: str) -> ChallengeStatus:
+        # No jitter: the agent polls this every 0.25 s with a 1.0 s budget.
+        return service.challenge_status(session_id, challenge_id)
 
     # ------------------------------------------------ 12, 13: factors, end
 

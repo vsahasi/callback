@@ -22,6 +22,9 @@ from callback_shared.contract import (
 )
 from callback_shared.contract import (
     CallerUpdate,
+    ChallengeIssued,
+    ChallengeKind,
+    ChallengeStatus,
     FactorReport,
     Role,
     Scenario,
@@ -35,8 +38,21 @@ from detector.config import Settings
 from detector.enrolment import VoicePrintStore
 from detector.mock import jitter_seconds
 from detector.observability import StructuredLogger
-from detector.v1.errors import InvalidScenario, UserNotFound
+from detector.v1.challenges import (
+    VERIFICATION_KINDS,
+    ChallengeRecord,
+    make_say,
+    new_challenge_id,
+)
+from detector.v1.errors import (
+    ChallengeNotFound,
+    InvalidScenario,
+    NoOpenEnrollment,
+    SessionLocked,
+    UserNotFound,
+)
 from detector.v1.logsafe import tag
+from detector.v1.scenarios import NO_AUDIO_OUTCOME, ChallengeOutcome, challenge_outcome
 from detector.v1.sessions import (
     MAX_TURNS,
     CallbackRecord,
@@ -198,7 +214,12 @@ class V1Service:
             self._on_user_turn(session, received_at)
 
     def _on_user_turn(self, session: V1Session, received_at: float) -> None:
-        """Hook for the challenge timing. Filled in with challenges."""
+        # Only the current challenge can be pending: a new one supersedes it.
+        if session.current_challenge_id is None:
+            return
+        current = session.challenges.get(session.current_challenge_id)
+        if current is not None:
+            current.note_user_turn(received_at)
 
     def add_event(self, session_id: str, event: SpeechEvent) -> None:
         session = self.registry.get(session_id)
@@ -214,6 +235,73 @@ class V1Service:
             kind=report.kind,
             result=report.result.value,
         )
+
+    # ---------------------------------------------------------- challenges
+
+    def _outcome_for(self, session: V1Session, kind: ChallengeKind) -> ChallengeOutcome:
+        if self.mock_mode and session.scenario is not None:
+            return challenge_outcome(session.scenario, kind)
+        # Real mode, Round 2: no listener, so nothing can be heard.
+        return NO_AUDIO_OUTCOME
+
+    def _enroll_prompt(self, session: V1Session, now: float) -> int:
+        """The prompt number the next enroll challenge asks."""
+
+        raise NoOpenEnrollment()
+
+    def create_challenge(self, session_id: str, kind: ChallengeKind) -> ChallengeIssued:
+        session = self.registry.get(session_id)
+        if session.locked_code is not None:
+            raise SessionLocked()
+        now = self.registry.now()
+        enroll_prompt = (
+            self._enroll_prompt(session, now) if kind is ChallengeKind.ENROLL else None
+        )
+        if session.current_challenge_id is not None:
+            current = session.challenges.get(session.current_challenge_id)
+            if current is not None and current.supersede(now):
+                self.log(
+                    "v1_challenge_superseded",
+                    session_id=session.session_id,
+                    challenge_id=current.challenge_id,
+                )
+        say, expected = make_say(kind, enroll_prompt=enroll_prompt)
+        record = ChallengeRecord(
+            challenge_id=new_challenge_id(),
+            kind=kind,
+            issued_at=now,
+            outcome=self._outcome_for(session, kind),
+            say=say,
+            expected=expected,
+            bind=session.pending_bind if kind in VERIFICATION_KINDS else None,
+            enroll_prompt=enroll_prompt,
+        )
+        session.challenges[record.challenge_id] = record
+        session.current_challenge_id = record.challenge_id
+        if session.enrollment is not None and kind is ChallengeKind.ENROLL:
+            session.enrollment.issued(record)
+        # Never the say: it is the answer.
+        self.log(
+            "v1_challenge_issued",
+            session_id=session.session_id,
+            challenge_id=record.challenge_id,
+            kind=kind.value,
+            enroll_prompt=enroll_prompt,
+        )
+        return ChallengeIssued(
+            challenge_id=record.challenge_id,
+            say=say,
+            expires_at=record.expires_at_ms,
+        )
+
+    def challenge_status(self, session_id: str, challenge_id: str) -> ChallengeStatus:
+        session = self.registry.get(session_id)
+        record = session.challenges.get(challenge_id)
+        if record is None:
+            raise ChallengeNotFound()
+        return record.resolve(self.registry.now()).wire()
+
+    # ----------------------------------------------------------------- end
 
     def end_session(self, session_id: str) -> None:
         session = self.registry.lookup(session_id)
