@@ -677,9 +677,7 @@ async def started_session(
     The room is not connected, so the options are given with audio and transcription turned off:
     what is real is the session, RoomIO, and what the room's events and topics do to them.
     """
-    options = dataclasses.replace(
-        options, audio_input=False, audio_output=False, text_output=False
-    )
+    options = dataclasses.replace(options, audio_input=False, audio_output=False, text_output=False)
     session = AgentSession(llm=FakeLLM(fake_responses=[]))
     try:
         await asyncio.wait_for(
@@ -729,9 +727,7 @@ async def test_left_to_its_defaults_a_session_takes_typed_input_on_both_topics(r
 async def test_started_as_the_worker_starts_it_a_session_takes_typed_input_on_neither_topic(room):
     # The room options come from build_room_options and session_host is False, as in worker.py,
     # which tests/test_structure.py pins by its source because no test can import it.
-    taken = await topics_taken_after_start(
-        room, build_room_options("caller-1"), session_host=False
-    )
+    taken = await topics_taken_after_start(room, build_room_options("caller-1"), session_host=False)
     assert taken == set()
 
 

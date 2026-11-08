@@ -233,7 +233,9 @@ class Gate:
         return GateResult(outcome.status, outcome.summary)
 
     async def _deny(self, req: ActionRequest) -> GateResult:
-        """Hold the vendor of a tier 1 or 2 request that names one, say whether that took, lock the call and hang up.
+        """Hold the vendor of a tier 1 or 2 request that names one, and say whether that took.
+
+        Then lock the call and hang up.
 
         If the call is closing by the time the hold is done, the caller is gone: it says nothing.
         """
@@ -245,7 +247,10 @@ class Gate:
                 held = await hold_vendor_fully(self._ramp, target.id, DENY_HOLD_REASON)
             except Exception:
                 logger.exception("the hold for a denied %s raised, so nothing is held", req.action)
-        line = prompts.DENY_HELD if held else prompts.DENY_NOT_HELD
+        # Only a hold that was confirmed is claimed. A read gets its own wording: nothing was
+        # changed, so "that change" would be wrong. Without a hold, DENY_NOT_HELD fits both.
+        held_line = prompts.DENY_READ_HELD if req.tier == 1 else prompts.DENY_HELD
+        line = held_line if held else prompts.DENY_NOT_HELD
         if self._state.closing:  # checked here, as the caller may have left while the hold ran
             logger.info("%s denied after the caller left, so the deny line is not said", req.action)
         else:

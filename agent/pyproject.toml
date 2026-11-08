@@ -41,3 +41,16 @@ markers = [
     "llm: needs OPENAI_API_KEY and calls the real model",
     "ramp_sandbox: needs RAMP_CLIENT_ID and calls the Ramp sandbox",
 ]
+
+# The agent has its own lint policy, because ruff uses the nearest config and the root ruff.toml
+# is the detector's (py311, stricter rules). Without this section the root file applies here.
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "SIM", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Copied unchanged from LiveKit (its first line is a long URL), so it is not reflowed.
+"tests/fake_llm.py" = ["E501"]

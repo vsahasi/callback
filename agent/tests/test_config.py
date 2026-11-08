@@ -54,7 +54,8 @@ def test_scenario_and_defaults():
 
 
 def test_empty_values_count_as_missing():
-    # A .env copied from .env.example holds CALLBACK_AGENT_NAME= and RAMP_BASE_URL=, which load as "".
+    # A .env copied from .env.example holds CALLBACK_AGENT_NAME= and RAMP_BASE_URL=, which load as
+    # "".
     s = Settings.from_env({**REQUIRED_ENV, "CALLBACK_AGENT_NAME": "", "RAMP_BASE_URL": " "})
     assert (s.agent_name, s.ramp_base_url) == ("callback", "https://demo-api.ramp.com")
     with pytest.raises(ValueError, match="CARTESIA_VOICE_ID"):

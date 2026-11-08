@@ -6,8 +6,6 @@ import copy
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
-
 from livekit.agents.llm import (
     LLM,
     ChatChunk,
@@ -24,6 +22,7 @@ from livekit.agents.types import (
     APIConnectOptions,
     NotGivenOr,
 )
+from pydantic import BaseModel, Field
 
 
 class FakeLLMResponse(BaseModel):

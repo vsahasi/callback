@@ -274,7 +274,7 @@ def is_digit_token(word: str) -> bool:
 
 
 def oh_positions(words: list[str]) -> set[int]:
-    """Where in the lowercase `words` an "oh" or an "o" is a zero (the rule of parse_spoken_digits)."""
+    """Where in the lowercase `words` an "oh" or "o" is a zero, as parse_spoken_digits reads it."""
     return _oh_positions(words)
 
 
@@ -329,10 +329,8 @@ def digit_tokens(words: list[str]) -> list[DigitToken]:
         repeat = _REPEATS.get(words[i], 0)
         if repeat and i + 1 < len(words):
             # "double oh seven": the "oh" is a zero here although it stands next to "double".
-            if words[i + 1] in _OH_WORDS:
-                target = DigitToken(i + 1, i + 2, 1)
-            else:
-                target = single(i + 1)
+            is_oh = words[i + 1] in _OH_WORDS
+            target = DigitToken(i + 1, i + 2, 1) if is_oh else single(i + 1)
             if target is not None:
                 tokens.append(DigitToken(i, target.end, repeat * target.digits))
                 i = target.end

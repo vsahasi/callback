@@ -3,7 +3,7 @@
 import functools
 import logging
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
-from contextlib import aclosing
+from contextlib import aclosing, suppress
 from time import time as wall_clock  # by name, so that a test can pin the clock the anchor reads
 from typing import Any
 
@@ -477,10 +477,10 @@ class CallbackAgent(TimedSttMixin, Agent):
     async def end_call(self, ctx: RunContext) -> str:
         """Hang up the phone call. Say goodbye first, then call this once the caller has nothing
         more to ask."""
-        try:
-            await ctx.wait_for_playout()  # the goodbye has to finish playing before the line drops
-        except RuntimeError:
-            pass  # there was no reply to wait for
+        # The goodbye has to finish playing before the line drops. With no reply there is nothing
+        # to wait for, and that raises RuntimeError.
+        with suppress(RuntimeError):
+            await ctx.wait_for_playout()
         if self._call is not None:
             await self._call.end_call()
         else:

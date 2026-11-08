@@ -386,10 +386,25 @@ async def test_a_pending_vendor_hold_on_deny_says_held_only_if_a_bill_held(
 
 async def test_tier1_deny_holds_the_vendor_it_names(gate, detector, ramp, speaker, call, state):
     detector.script = [DENY]
-    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_HELD)
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_READ_HELD)
     assert ramp.calls == [("hold_vendor", "v1")]
-    assert speaker.lines == [prompts.DENY_HELD]
+    assert speaker.lines == [prompts.DENY_READ_HELD]
     assert call.ended and state.locked
+
+
+async def test_a_denied_read_whose_hold_failed_does_not_claim_one(
+    gate, detector, ramp, speaker, call, state
+):
+    detector.script = [DENY]
+    ramp.fail["hold_vendor"] = RampError(500)
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_NOT_HELD)
+    assert speaker.lines == [prompts.DENY_NOT_HELD] and call.ended and state.locked
+
+
+def test_the_read_line_says_a_hold_and_names_no_reason():
+    line = prompts.DENY_READ_HELD.lower()
+    assert "hold" in line and "payments" in line and "can't help with that" in line
+    assert "fraud" not in line and "change" not in line
 
 
 async def test_a_denied_vendor_list_holds_nothing(gate, detector, ramp, speaker, call, state):
@@ -406,9 +421,9 @@ async def test_detector_down_holds_the_vendor_of_a_tier1_read(
     gate, detector, ramp, speaker, call, state
 ):
     state.session_id, state.detector_down = None, True
-    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_HELD)
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_READ_HELD)
     assert detector.requests == [] and ramp.calls == [("hold_vendor", "v1")]
-    assert speaker.lines == [prompts.DENY_HELD] and call.ended and state.locked
+    assert speaker.lines == [prompts.DENY_READ_HELD] and call.ended and state.locked
 
 
 # --- before identification ---
@@ -454,7 +469,7 @@ async def test_a_read_denied_after_the_caller_hung_up_holds_but_says_nothing(
     gate, detector, ramp, speaker, call, state
 ):
     detector.script = [after_hangup(state, DENY)]
-    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_HELD)
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_READ_HELD)
     assert ramp.calls == [("hold_vendor", "v1")]
     assert speaker.lines == [] and call.ended and state.locked
 
@@ -691,9 +706,7 @@ async def test_exclusive_lets_go_of_the_lock_when_its_body_fails(gate, detector,
     assert (await asyncio.wait_for(gate.run(ACCOUNTS), 1)).status == "done"
 
 
-async def test_a_task_cancelled_while_it_waits_for_exclusive_does_not_keep_the_lock(
-    gate, detector
-):
+async def test_a_task_cancelled_while_it_waits_for_exclusive_does_not_keep_the_lock(gate, detector):
     entered, release = asyncio.Event(), asyncio.Event()
     holder = asyncio.create_task(hold_exclusively(gate, entered, release))
     await asyncio.wait_for(entered.wait(), 1)

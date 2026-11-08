@@ -57,9 +57,7 @@ def tool_call(name: str, call_id: str = "c1", **arguments) -> FunctionToolCall:
 
 def step(input: str, content: str = "", *calls: FunctionToolCall) -> FakeLLMResponse:
     """What the scripted LLM answers when its last input is `input`."""
-    return FakeLLMResponse(
-        input=input, content=content, ttft=0, duration=0, tool_calls=list(calls)
-    )
+    return FakeLLMResponse(input=input, content=content, ttft=0, duration=0, tool_calls=list(calls))
 
 
 def scripted(*responses: FakeLLMResponse) -> FakeLLM:

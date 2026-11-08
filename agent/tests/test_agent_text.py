@@ -20,7 +20,8 @@ def new_agent(**options) -> CallbackAgent:
 async def first_messages(count, *, responses=()):
     """Start a CallbackAgent in a roomless text session and return its first `count` chat messages.
 
-    The first conversation_item_added of a session is an AgentHandoff marker, not a message, so it is skipped.
+    The first conversation_item_added of a session is an AgentHandoff marker, not a message, so it
+    is skipped.
     """
     messages = []
     enough = asyncio.Event()
@@ -44,7 +45,9 @@ async def test_disclosure_is_said_first():
 
 
 async def test_the_agent_asks_who_it_is_speaking_with_after_the_disclosure():
-    ask = FakeLLMResponse(input=prompts.ASK_WHO, content="Who am I speaking with?", ttft=0, duration=0)
+    ask = FakeLLMResponse(
+        input=prompts.ASK_WHO, content="Who am I speaking with?", ttft=0, duration=0
+    )
     messages = await first_messages(2, responses=[ask])
     assert [(m.role, m.text_content) for m in messages] == [
         ("assistant", prompts.DISCLOSURE),

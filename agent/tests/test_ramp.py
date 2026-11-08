@@ -634,9 +634,7 @@ async def test_request_retries_a_read_like_every_other_read(ramp, api, pauses):
     assert pauses == [0.0]
 
 
-async def test_request_logs_the_call_and_the_trace_but_never_a_body_or_the_token(
-    ramp, api, caplog
-):
+async def test_request_logs_the_call_and_the_trace_but_never_a_body_or_the_token(ramp, api, caplog):
     caplog.set_level(logging.DEBUG, logger="callback_agent.ramp")
     api.post(f"{API}/vendors").respond(
         422,

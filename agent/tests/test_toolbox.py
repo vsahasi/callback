@@ -813,8 +813,7 @@ def test_the_enrollment_lines_are_what_the_brief_says():
         "Enrollment finished and the caller already heard that. Ask if there's anything else."
     )
     assert prompts.ENROLL_TOOL_DECLINED == (
-        "The caller declined enrollment and already heard that. "
-        "Don't offer it again on this call."
+        "The caller declined enrollment and already heard that. Don't offer it again on this call."
     )
     assert prompts.ENROLL_TOOL_FAILED == (
         "Enrollment didn't finish and the caller already heard why. Don't retry on this call."
@@ -976,7 +975,6 @@ async def test_cancellation_gets_through_the_enrollment_and_frees_the_lock(
     with pytest.raises(asyncio.CancelledError):
         await toolbox.start_voice_enrollment()
     assert gate.events == ["enter", "run", "exit"]
-
 
 
 # --- the same tools with the real gate ---

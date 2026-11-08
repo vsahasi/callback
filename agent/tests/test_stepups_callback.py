@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import logging
 import typing
+from contextlib import suppress
 from dataclasses import dataclass
 
 import pytest
@@ -568,18 +569,15 @@ def call_ending(leg, detector, capture, state) -> None:
     ],
     ids=lambda way_out: way_out.__name__,
 )
-async def test_the_flag_is_down_after_every_way_out(
-    detector, capture, state, leg, way_out, before
-):
+async def test_the_flag_is_down_after_every_way_out(detector, capture, state, leg, way_out, before):
     stepups = StepUps(detector, capture, state, callback_leg=None if way_out is no_leg else leg)
     way_out(leg, detector, capture, state)
     # Up before is a flag left up by something else: a way out that never raises the flag, such
     # as a browser session, still has to lower it.
     state.callback_in_progress = before
-    try:
+    # Some ways out raise: this test is about the flag.
+    with suppress(Exception, asyncio.CancelledError):
         await stepups.callback(BANK_CHANGE)
-    except (Exception, asyncio.CancelledError):
-        pass  # some ways out raise: this test is about the flag
     assert state.callback_in_progress is False
 
 

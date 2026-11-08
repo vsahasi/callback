@@ -13,6 +13,7 @@ lines, the vendor hold and the lock.
 
 import asyncio
 import time
+from collections import defaultdict
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -26,22 +27,23 @@ from callback_shared.contract import (
     DecisionKind,
     ErrorCode,
     ErrorResponse,
-    Role,
     Scenario,
     SessionCreate,
-    Turn,
     UserSummary,
 )
 from fake_ramp import FakeRamp
+from livekit.agents import ConversationItemAddedEvent
+from livekit.agents.llm import ChatMessage
 
 from callback_agent import prompts
 from callback_agent.actions import ActionRequest
 from callback_agent.detector import DetectorClient
 from callback_agent.enrollment import Enrollment
 from callback_agent.gate import Gate, GateResult
-from callback_agent.redact import redact_turn
+from callback_agent.session_wiring import wire_turn_forwarding
 from callback_agent.state import CallState
 from callback_agent.stepups import StepUps
+from callback_agent.turns import FinalSegment, Forwarder
 
 ERIC_NAME = "Eric Catalano"
 ERIC_ID = "u_eric"
@@ -94,14 +96,36 @@ class SpyDetector(DetectorClient):
         ]
 
 
-class ScriptedCapture:
-    """The caller's side, for the step-ups, the enrollment and the gate's deny line."""
+class FakeSession:
+    """The part of an AgentSession that wire_turn_forwarding uses: on() and agent_state."""
 
-    def __init__(self, detector: DetectorClient, state: CallState) -> None:
+    def __init__(self) -> None:
+        self.agent_state = "listening"
+        self.handlers: dict[str, list] = defaultdict(list)
+
+    def on(self, event: str, callback=None):
+        self.handlers[event].append(callback)
+        return callback
+
+    def fire(self, event: str, ev) -> None:
+        for handler in self.handlers[event]:
+            handler(ev)
+
+
+class ScriptedCapture:
+    """The caller's side, for the step-ups, the enrollment and the gate's deny line.
+
+    An answer reaches the detector the way a spoken one does: as a user message on the session,
+    which wire_turn_forwarding redacts (with the exempt window of a secret ask) and hands to the
+    Forwarder, whose background task posts it. ask() returns without waiting for the post, as the
+    real one does, so a turn can arrive late or be dropped.
+    """
+
+    def __init__(self, state: CallState, session: FakeSession) -> None:
         self.lines: list[str] = []
         self.asks: list[str] = []
-        self._detector = detector
         self._state = state
+        self._session = session
 
     async def say(self, text: str) -> None:
         self.lines.append(text)
@@ -110,12 +134,15 @@ class ScriptedCapture:
         self.lines.append(prompt)
         self.asks.append(prompt)
         answer = self._answer_to(prompt, secret)
-        now_ms = round(time.time() * 1000)
-        turn = Turn(role=Role.USER, text=answer, start_ms=now_ms, end_ms=now_ms + 1200, words=[])
-        # What session_wiring does to every turn before it forwards it.
-        turn = redact_turn(turn, exempt_short_runs=self._state.answer_exempt)
-        assert self._state.session_id is not None
-        await self._detector.post_turn(self._state.session_id, turn)
+        now = time.time()
+        words = tuple((w, 0.2 * i, 0.2 * i + 0.15) for i, w in enumerate(answer.split()))
+        self._state.pending_segments.append(
+            FinalSegment(answer, 0.0, words[-1][2] + 0.05, words, t0=now)
+        )
+        message = ChatMessage(role="user", content=[answer])
+        self._session.fire(
+            "conversation_item_added", ConversationItemAddedEvent(item=message, created_at=now)
+        )
         return answer
 
     @staticmethod
@@ -154,6 +181,7 @@ class Rig:
     capture: ScriptedCapture
     call: FakeCall
     leg: FakeCallbackLeg
+    forwarder: Forwarder
     gate: Gate
     stepups: StepUps
     enrollment: Enrollment
@@ -181,6 +209,7 @@ async def rig(
     channel: Channel = Channel.PHONE,
     http_factory: HttpFactory | None = None,
     poll_interval_s: float = 0.25,
+    poll_timeout_s: float = 8.0,
 ) -> AsyncIterator[Rig]:
     """A call at `url`: the caller is identified as Eric and a session is open.
 
@@ -191,14 +220,25 @@ async def rig(
     )
     state = CallState(room_name=f"conf-{uuid4().hex}", caller_identity="sip_conf", channel=channel)
     ramp = FakeRamp()
-    capture = ScriptedCapture(client, state)
+    session = FakeSession()
+    forwarder = Forwarder(client)
+    wire_turn_forwarding(session, state, forwarder)
+    capture = ScriptedCapture(state, session)
     call = FakeCall()
     leg = FakeCallbackLeg()
-    stepups = StepUps(client, capture, state, callback_leg=leg, poll_interval_s=poll_interval_s)
+    stepups = StepUps(
+        client,
+        capture,
+        state,
+        callback_leg=leg,
+        poll_interval_s=poll_interval_s,
+        poll_timeout_s=poll_timeout_s,
+    )
     gate = Gate(
         detector=client, ramp=ramp, speaker=capture, stepups=stepups, call=call, state=state
     )
     enrollment = Enrollment(client, capture, stepups, state)
+    forwarding = asyncio.create_task(forwarder.run())
     try:
         users = await client.find_users(ERIC_NAME)
         assert [u.user_id for u in users] == [ERIC_ID], users
@@ -213,9 +253,16 @@ async def rig(
         )
         state.session_id = created.session_id
         state.claimed_user = users[0]
-        yield Rig(client, state, ramp, capture, call, leg, gate, stepups, enrollment, users[0])
+        forwarder.attach(created.session_id)
+        yield Rig(
+            client, state, ramp, capture, call, leg, forwarder, gate, stepups, enrollment, users[0]
+        )
     finally:
         try:
+            # As the worker ends a call: let the forwarder post what is queued, then stop it.
+            await forwarder.drain()
+            await forwarder.aclose()
+            await forwarding
             if state.session_id is not None:
                 await client.end_session(state.session_id)
         finally:
@@ -227,11 +274,12 @@ def deny_codes(r: Rig) -> list[tuple[str, str | None]]:
     return [(kind, code) for kind, _, code in r.client.rounds]
 
 
-def assert_held_and_hung_up(r: Rig, result: GateResult) -> None:
+def assert_held_and_hung_up(r: Rig, result: GateResult, *, read: bool = False) -> None:
     """The deny path ran: v1 is held, the line says so, the call is over and locked."""
-    assert result == GateResult("denied", prompts.DENY_HELD), result
+    line = prompts.DENY_READ_HELD if read else prompts.DENY_HELD
+    assert result == GateResult("denied", line), result
     assert ("hold_vendor", "v1") in r.ramp.calls
-    assert r.capture.lines[-1] == prompts.DENY_HELD
+    assert r.capture.lines[-1] == line
     assert r.call.ended and r.state.locked
 
 
@@ -301,7 +349,7 @@ async def case_cloned_voice(url: str, token: str, *, age_wait_s: float = CLONE_R
     async with rig(url, token, Scenario.CLONED_VOICE, channel=Channel.BROWSER, **kw) as r:
         await asyncio.sleep(age_wait_s)
         result = await r.run(ACCOUNTS)
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         assert deny_codes(r) == [("deny", "synthetic_speech")]
 
 
@@ -318,7 +366,7 @@ async def case_replay(url: str, token: str, **kw) -> None:
 
     async with rig(url, token, Scenario.REPLAY, channel=Channel.BROWSER, **kw) as r:
         result = await r.run(ACCOUNTS)
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         assert r.client.rounds[0][:2] == ("step_up", ["voice_challenge"])
         assert len(r.client.rounds) == 2
         assert r.client.rounds[1][::2] == ("deny", "challenge_failed_replay")
@@ -347,7 +395,7 @@ async def case_human_impostor(url: str, token: str, **kw) -> None:
 
     async with rig(url, token, Scenario.HUMAN_IMPOSTOR, channel=Channel.BROWSER, **kw) as r:
         result = await r.run(ACCOUNTS)
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         assert r.client.rounds[0][:2] == ("step_up", ["voice_challenge"])
         assert r.client.rounds[-1][::2] == ("deny", "speaker_mismatch")
 
@@ -379,7 +427,7 @@ async def case_wrong_token(url: str, token: str, **kw) -> None:
             result = await gate.run(ACCOUNTS)
         finally:
             await bad.aclose()
-        assert_held_and_hung_up(r, result)
+        assert_held_and_hung_up(r, result, read=True)
         [decision] = bad.decisions
         assert decision.reasons[0].startswith("detector_unavailable"), decision.reasons
         assert "HTTP 401" in decision.reasons[0]
@@ -409,7 +457,7 @@ async def case_detector_stopped(token: str, *, http=None) -> None:
         user_id=ERIC_ID, display_name=ERIC_NAME, role="CFO", phone_last_four="0100"
     )
     ramp, call = FakeRamp(), FakeCall()
-    capture = ScriptedCapture(client, state)
+    capture = ScriptedCapture(state, FakeSession())
     stepups = StepUps(client, capture, state)
     gate = Gate(
         detector=client, ramp=ramp, speaker=capture, stepups=stepups, call=call, state=state
