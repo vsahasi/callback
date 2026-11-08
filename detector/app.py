@@ -5,6 +5,10 @@ Endpoints:
     GET  /factors/{session_id}   current factor breakdown for a session
     GET  /healthz                liveness, contract version, mock flag
 
+The agent contract, callback_shared 1.1.0, is served under /v1 by
+detector.v1. Its routes share the bearer check below and also need
+X-Contract-Version.
+
 Mounted here, defined elsewhere:
     POST /verify/bank-details    detector.verification, only when
                                  CALLBACK_BANK_VERIFY_ENABLED is on
@@ -23,13 +27,27 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, TextIO
 
+from callback_shared.contract import (
+    CONTRACT_VERSION as WIRE_CONTRACT_VERSION,
+)
+from callback_shared.contract import (
+    CONTRACT_VERSION_HEADER as WIRE_CONTRACT_VERSION_HEADER,
+)
+from callback_shared.contract import (
+    ErrorBody as WireErrorBody,
+)
+from callback_shared.contract import (
+    ErrorResponse as WireErrorResponse,
+)
 from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from detector import mock
 from detector.config import Settings
@@ -39,10 +57,12 @@ from detector.enrolment import (
     store_from_settings,
 )
 from detector.errors import DetectorError, Unauthorized
-from detector.observability import ObservabilityConfig
+from detector.observability import V1_ENDPOINTS, ObservabilityConfig
 from detector.pipeline import AudioPipeline
 from detector.review import mount as mount_review
 from detector.state import DetectorEngine
+from detector.v1 import build_v1_router
+from detector.v1.router import V1Service
 from detector.verification import build_verification_router
 from shared.contract import (
     CONTRACT_VERSION,
@@ -56,12 +76,54 @@ from shared.contract import (
 )
 
 
+def make_require_token(settings: Settings) -> Callable[..., None]:
+    """The bearer check, as a FastAPI dependency. /events and /v1 share it."""
+
+    def require_token(
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> None:
+        expected = settings.api_token
+        if not authorization or not authorization.lower().startswith("bearer "):
+            raise Unauthorized("missing bearer token")
+        presented = authorization.split(" ", 1)[1].strip()
+        # Compare bytes, not str: secrets.compare_digest raises TypeError on
+        # non-ASCII str, and Starlette decodes headers as latin-1, so one
+        # non-ASCII byte in the header turned a 401 into an unhandled 500.
+        if not secrets.compare_digest(
+            presented.encode("utf-8"), expected.encode("utf-8")
+        ):
+            raise Unauthorized("invalid bearer token")
+
+    return require_token
+
+
+def _is_v1(request: Request) -> bool:
+    return request.url.path.startswith("/v1/")
+
+
+def _wire_error(
+    status: int, code: str, message: str, detail: str | None
+) -> JSONResponse:
+    """A /v1 error: callback_shared's ErrorResponse, with the version header."""
+
+    body = WireErrorResponse(
+        contract_version=WIRE_CONTRACT_VERSION,
+        error=WireErrorBody(code=code, message=message, detail=detail),
+    )
+    return JSONResponse(
+        status_code=status,
+        content=body.model_dump(mode="json"),
+        headers={WIRE_CONTRACT_VERSION_HEADER: WIRE_CONTRACT_VERSION},
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     observability: ObservabilityConfig | None = None,
     log_stream: TextIO | None = None,
     voiceprints: VoicePrintStore | None = None,
+    v1_clock: Callable[[], float] | None = None,
 ) -> FastAPI:
     """Build the app. Tests call this directly with explicit settings.
 
@@ -73,6 +135,10 @@ def create_app(
 
     `voiceprints` is the same seam for the enrolment store, so a test can
     hand over a pre-populated one instead of enrolling over HTTP first.
+
+    `v1_clock` is the /v1 registry clock, epoch seconds. It defaults to
+    `time.time`; the /v1 tests hand in a fake one to step through session
+    expiry, challenge timing and the cloned-voice spoof rise.
     """
 
     resolved = settings or Settings.from_env()
@@ -102,6 +168,7 @@ def create_app(
             yield
         finally:
             await audio.aclose()
+            await v1.aclose()
 
     app = FastAPI(
         lifespan=lifespan,
@@ -139,6 +206,21 @@ def create_app(
         build_enrolment_router(resolved, store=prints, client_of=audio.http)
     )
 
+    require_token = make_require_token(resolved)
+
+    # The agent contract, callback_shared 1.1.0. After the enrolment router so
+    # /v1 enrollments write into the same voice print store, and before the
+    # review mount so the observability middleware wraps it.
+    v1_router = build_v1_router(
+        resolved,
+        voiceprints=prints,
+        clock=v1_clock or time.time,
+        require_token=require_token,
+    )
+    v1: V1Service = v1_router.service  # type: ignore[attr-defined]
+    app.include_router(v1_router)
+    app.state.v1 = v1
+
     if resolved.api_token_generated:
         # Loud on purpose: the service is up but can authenticate nobody.
         print(
@@ -149,25 +231,12 @@ def create_app(
             flush=True,
         )
 
-    def require_token(
-        authorization: Annotated[str | None, Header()] = None,
-    ) -> None:
-        expected = resolved.api_token
-        if not authorization or not authorization.lower().startswith("bearer "):
-            raise Unauthorized("missing bearer token")
-        presented = authorization.split(" ", 1)[1].strip()
-        # Compare bytes, not str: secrets.compare_digest raises TypeError on
-        # non-ASCII str, and Starlette decodes headers as latin-1, so one
-        # non-ASCII byte in the header turned a 401 into an unhandled 500.
-        if not secrets.compare_digest(
-            presented.encode("utf-8"), expected.encode("utf-8")
-        ):
-            raise Unauthorized("invalid bearer token")
-
     # ------------------------------------------------------------- handlers
 
     @app.exception_handler(DetectorError)
-    async def _detector_error(_: Request, exc: DetectorError) -> JSONResponse:
+    async def _detector_error(request: Request, exc: DetectorError) -> JSONResponse:
+        if _is_v1(request):
+            return _wire_error(exc.http_status, str(exc.code), exc.message, exc.detail)
         body = ErrorResponse(
             error=ErrorBody(code=exc.code, message=exc.message, detail=exc.detail)
         )
@@ -177,7 +246,7 @@ def create_app(
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(
-        _: Request, exc: RequestValidationError
+        request: Request, exc: RequestValidationError
     ) -> JSONResponse:
         # Never echo the rejected input. Pydantic attaches it to every error
         # entry, so rendering errors() verbatim hands the caller back whatever
@@ -192,6 +261,13 @@ def create_app(
             return f"{location}: {message}"
 
         detail = "; ".join(_detail_line(error) for error in exc.errors()[:3])
+        if _is_v1(request):
+            return _wire_error(
+                422,
+                "validation_error",
+                "request failed contract validation",
+                detail or None,
+            )
         body = ErrorResponse(
             error=ErrorBody(
                 code=ErrorCode.VALIDATION_ERROR,
@@ -200,6 +276,17 @@ def create_app(
             )
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(request: Request, exc: StarletteHTTPException) -> Response:
+        # Routing errors: an unknown /v1 path or a wrong method. Under /v1 they
+        # get the contract's error body too; everywhere else, FastAPI's own.
+        if _is_v1(request):
+            code = {404: "not_found", 405: "method_not_allowed"}.get(
+                exc.status_code, f"http_{exc.status_code}"
+            )
+            return _wire_error(exc.status_code, code, "no such /v1 route", None)
+        return await http_exception_handler(request, exc)
 
     # ------------------------------------------------------------ endpoints
 
@@ -266,6 +353,10 @@ def create_app(
         config=observability,
         stream=log_stream,
     )
+    # /v1 logs through the same structured logger and redactor, and its route
+    # templates become known endpoints, so ids never become metric labels.
+    v1.bind_logger(app.state.observability.logger)
+    app.state.observability.add_known_endpoints(V1_ENDPOINTS)
 
     return app
 

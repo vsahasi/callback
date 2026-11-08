@@ -1161,6 +1161,72 @@ UNMATCHED_ENDPOINT = "/unmatched"
 
 _SESSION_SEGMENT = "/api/sessions/"
 
+#: The agent contract's routes (callback_shared 1.1.0, detector/v1). create_app
+#: registers them as known endpoints. Ids in a /v1 path collapse to these
+#: templates, so a session, challenge or user id never becomes a metric label
+#: or a logged path.
+_V1_SESSION_TAILS = (
+    "caller",
+    "turns",
+    "events",
+    "challenges",
+    "otp/send",
+    "otp/check",
+    "authorize",
+    "factors",
+    "end",
+)
+V1_ENDPOINTS: frozenset[str] = frozenset(
+    {
+        "/v1/users",
+        "/v1/users/{user_id}",
+        "/v1/sessions",
+        *(f"/v1/sessions/{{session_id}}/{tail}" for tail in _V1_SESSION_TAILS),
+        "/v1/sessions/{session_id}/challenges/{challenge_id}",
+        "/v1/enrollments",
+        "/v1/enrollments/{enrollment_id}/complete",
+        "/v1/enrollments/{user_id}",
+    }
+)
+
+
+def _v1_template(trimmed: str) -> str | None:
+    """The /v1 route template a path belongs to, or None."""
+
+    parts = trimmed.split("/")[1:]  # drop the empty segment before "/v1"
+    if not parts or parts[0] != "v1":
+        return None
+    rest = parts[1:]
+    if not rest:
+        return None
+    head, tail = rest[0], rest[1:]
+    if head == "users":
+        if not tail:
+            return "/v1/users"
+        if len(tail) == 1:
+            return "/v1/users/{user_id}"
+        return None
+    if head == "sessions":
+        if not tail:
+            return "/v1/sessions"
+        after = "/".join(tail[1:])
+        if not after:
+            return None
+        if after in _V1_SESSION_TAILS:
+            return f"/v1/sessions/{{session_id}}/{after}"
+        if len(tail) == 3 and tail[1] == "challenges":
+            return "/v1/sessions/{session_id}/challenges/{challenge_id}"
+        return None
+    if head == "enrollments":
+        if not tail:
+            return "/v1/enrollments"
+        if len(tail) == 1:
+            return "/v1/enrollments/{user_id}"
+        if len(tail) == 2 and tail[1] == "complete":
+            return "/v1/enrollments/{enrollment_id}/complete"
+        return None
+    return None
+
 
 def normalise_endpoint(path: str, known: frozenset[str] = BASE_ENDPOINTS) -> str:
     """Collapse one request path to a bounded route template."""
@@ -1168,6 +1234,11 @@ def normalise_endpoint(path: str, known: frozenset[str] = BASE_ENDPOINTS) -> str
     if not path:
         return UNMATCHED_ENDPOINT
     trimmed = path.rstrip("/") or "/"
+    if trimmed.startswith("/v1/"):
+        template = _v1_template(trimmed)
+        if template is not None and template in known:
+            return template
+        return UNMATCHED_ENDPOINT
     if trimmed in known:
         return trimmed
     if trimmed.startswith("/factors/"):
@@ -1549,7 +1620,10 @@ class Observability:
             level="error" if status >= 500 else "info",
             request_id=request_id,
             method=method,
-            path=path,
+            # A /v1 path holds ids, so only its route template is logged. The
+            # query string (a caller's name on GET /v1/users) is never here:
+            # the ASGI path excludes it.
+            path=endpoint if path.startswith("/v1/") else path,
             endpoint=endpoint,
             status=status,
             latency_ms=latency_ms,
