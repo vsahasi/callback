@@ -97,7 +97,8 @@ async def test_send_ignores_any_body(v1: httpx.AsyncClient) -> None:
 async def test_a_non_ascii_code_is_just_wrong(v1: httpx.AsyncClient) -> None:
     session_id = await create_session(v1)
     await send(v1, session_id)
-    assert (await check(v1, session_id, "\uff14\uff12\uff14\uff12\uff14\uff12"  # fullwidth 424242)).json() == {"verified": False}
+    fullwidth = "\uff14\uff12\uff14\uff12\uff14\uff12"  # 424242 in fullwidth digits
+    assert (await check(v1, session_id, fullwidth)).json() == {"verified": False}
 
 
 async def test_a_check_before_any_send_is_409(v1: httpx.AsyncClient) -> None:
