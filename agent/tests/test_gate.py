@@ -384,11 +384,31 @@ async def test_a_pending_vendor_hold_on_deny_says_held_only_if_a_bill_held(
     assert speaker.lines == [prompts.VERIFYING, line] and call.ended
 
 
-async def test_tier1_deny_ends_the_call_without_a_hold(gate, detector, ramp, speaker, call, state):
+async def test_tier1_deny_holds_the_vendor_it_names(gate, detector, ramp, speaker, call, state):
     detector.script = [DENY]
-    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_NOT_HELD)
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_HELD)
+    assert ramp.calls == [("hold_vendor", "v1")]
+    assert speaker.lines == [prompts.DENY_HELD]
+    assert call.ended and state.locked
+
+
+async def test_a_denied_vendor_list_holds_nothing(gate, detector, ramp, speaker, call, state):
+    # list_vendors names no vendor, so there is nothing to hold.
+    detector.script = [DENY]
+    assert await gate.run(ActionRequest.list_vendors()) == GateResult(
+        "denied", prompts.DENY_NOT_HELD
+    )
     assert ramp.calls == [] and speaker.lines == [prompts.DENY_NOT_HELD]
     assert call.ended and state.locked
+
+
+async def test_detector_down_holds_the_vendor_of_a_tier1_read(
+    gate, detector, ramp, speaker, call, state
+):
+    state.session_id, state.detector_down = None, True
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_HELD)
+    assert detector.requests == [] and ramp.calls == [("hold_vendor", "v1")]
+    assert speaker.lines == [prompts.DENY_HELD] and call.ended and state.locked
 
 
 # --- before identification ---
@@ -430,12 +450,13 @@ async def test_a_deny_after_the_caller_hung_up_holds_but_says_nothing(
     assert call.ended and state.locked
 
 
-async def test_a_read_denied_after_the_caller_hung_up_only_hangs_up(
+async def test_a_read_denied_after_the_caller_hung_up_holds_but_says_nothing(
     gate, detector, ramp, speaker, call, state
 ):
     detector.script = [after_hangup(state, DENY)]
-    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_NOT_HELD)
-    assert ramp.calls == [] and speaker.lines == [] and call.ended and state.locked
+    assert await gate.run(ACCOUNTS) == GateResult("denied", prompts.DENY_HELD)
+    assert ramp.calls == [("hold_vendor", "v1")]
+    assert speaker.lines == [] and call.ended and state.locked
 
 
 async def test_a_step_up_that_raises_after_the_caller_hung_up_holds_but_says_nothing(

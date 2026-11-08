@@ -268,19 +268,24 @@ def test_idempotency_key_hashes_session_action_redacted_params_and_round():
 def test_hold_targets():
     assert BANK.hold_target() == HoldTarget("vendor", "v1")
     assert ActionRequest.release_bill_hold("b1", "v1").hold_target() == HoldTarget("vendor", "v1")
-    assert (
-        ActionRequest.list_vendor_accounts("v1", "Acme Supplies").hold_target() is None
-    )  # V6: reads never hold
+    # A denied read holds the vendor it names (final ruling, C31). list_vendors names none.
+    assert ACCOUNTS.hold_target() == HoldTarget("vendor", "v1")
+    assert ActionRequest.list_bills("v1", "Acme Supplies").hold_target() == HoldTarget(
+        "vendor", "v1"
+    )
+    assert ActionRequest.list_vendors().hold_target() is None
+    assert HOLD.hold_target() is None
+    assert ActionRequest.hold_bill("b1", "v1", "r").hold_target() is None
 
 
-def test_every_tier2_request_holds_its_vendor_and_nothing_else_holds():
+def test_every_vendor_scoped_tier1_and_tier2_request_holds_its_vendor():
     targets = {req.action: req.hold_target() for req in EVERY_REQUEST}
     assert targets == {
         Action.HOLD_VENDOR: None,
         Action.HOLD_BILL: None,
         Action.LIST_VENDORS: None,
-        Action.LIST_VENDOR_ACCOUNTS: None,
-        Action.LIST_BILLS: None,
+        Action.LIST_VENDOR_ACCOUNTS: HoldTarget("vendor", "v1"),
+        Action.LIST_BILLS: HoldTarget("vendor", "v1"),
         Action.UPDATE_VENDOR_BANK_ACCOUNT: HoldTarget("vendor", "v1"),
         Action.RELEASE_VENDOR_HOLD: HoldTarget("vendor", "v1"),
         Action.RELEASE_BILL_HOLD: HoldTarget("vendor", "v1"),

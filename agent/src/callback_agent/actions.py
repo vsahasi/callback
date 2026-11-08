@@ -176,11 +176,12 @@ class ActionRequest:
         return hashlib.sha256(text.encode()).hexdigest()[:32]
 
     def hold_target(self) -> HoldTarget | None:
-        """What a deny puts on hold: the vendor of a tier-2 request (for a bill release, the bill's
-        vendor). Nothing for tiers 0 and 1, so a denied read can't freeze payments (V6)."""
-        if self.tier < 2:
-            return None
-        return HoldTarget("vendor", self.params["vendor_id"])
+        """What a deny puts on hold: the vendor a tier 1 or 2 request names (for a bill release,
+        the bill's vendor). Nothing for a hold, which is tier 0, and nothing for a request with no
+        vendor, such as list_vendors. A denied read holds its vendor too (final ruling, C31)."""
+        if self.tier >= 1 and "vendor_id" in self.params:
+            return HoldTarget("vendor", self.params["vendor_id"])
+        return None
 
     def _pending_action(self) -> str:
         """The request in the caller's terms. It fits "Did you just ask me to ...?"."""
