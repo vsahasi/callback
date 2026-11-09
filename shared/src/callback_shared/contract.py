@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-CONTRACT_VERSION = "1.1.0"
+CONTRACT_VERSION = "1.2.0"
 CONTRACT_VERSION_HEADER = (
     "X-Contract-Version"  # sent on every request to the detection service
 )
@@ -199,6 +199,38 @@ class Word(_Model):
 
 # D7: agent turns send words=[]. On a user turn, interrupted means the caller started while the
 # agent was speaking. On an agent turn, it means the agent was cut off.
+class ClipRef(_Model):
+    """Where the audio of one turn is, for the detector to fetch.
+
+    Added in 1.2.0. Optional, and a minor bump rather than a major one: the
+    version check compares majors, so a 1.1.0 agent that sends no clip keeps
+    working unchanged and simply enrolls nothing.
+
+    It exists because `/v1` otherwise carries no audio at all. The design is a
+    hidden listener in the room, and until that exists an `enroll` prompt can
+    never pass, so a voiceprint can never be recorded. This lets the agent,
+    which already writes call audio to its own bucket, point the detector at
+    the span it just posted a turn for.
+
+    `uri` is fetched under the detector's audio policy: https only, the host
+    named in CALLBACK_AUDIO_ALLOWED_HOSTS, every resolved address globally
+    routable, no redirects, and a byte cap. The detector reduces the audio to
+    a voice print and keeps no audio, so a clip is read once and discarded.
+
+    A WAV container is detected from its magic bytes, so `pcm_s16le` is the
+    right encoding for a .wav as well as for raw samples.
+    """
+
+    #: An https url. Capped because it travels in a turn body and an
+    #: unbounded field there is an unbounded request; 8 KiB is generous for a
+    #: signed object-store url with a long query string, and far too small to
+    #: inline the audio itself, which is deliberate. The audio belongs in the
+    #: bucket, not in the turn.
+    uri: str = Field(max_length=8192)
+    sample_rate_hz: int = Field(default=16000, ge=8000, le=48000)
+    encoding: Literal["pcm_s16le", "flac"] = "pcm_s16le"
+
+
 class Turn(_Model):
     role: Role
     text: str
@@ -206,6 +238,9 @@ class Turn(_Model):
     end_ms: int
     words: list[Word] = Field(default_factory=list)
     interrupted: bool = False
+    #: Audio of this turn, when the agent has somewhere to put it. Read only
+    #: for a user turn that answers an open `enroll` challenge; see ClipRef.
+    audio: ClipRef | None = None
 
 
 class SpeechEvent(_Model):

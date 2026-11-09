@@ -305,6 +305,10 @@ WIRE_TURN = {
         {"w": "two", "start_ms": 1000600, "end_ms": 1000880},
     ],
     "interrupted": True,
+    # contract 1.2.0: a turn may point at its own audio, for enrollment. This
+    # agent does not write clips yet, so it sends an explicit null, which the
+    # detector reads as "nothing to fetch".
+    "audio": None,
 }
 
 

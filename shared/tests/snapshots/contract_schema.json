@@ -221,6 +221,37 @@
       "title": "ChallengeStatus",
       "type": "object"
     },
+    "ClipRef": {
+      "description": "Where the audio of one turn is, for the detector to fetch.\n\nAdded in 1.2.0. Optional, and a minor bump rather than a major one: the\nversion check compares majors, so a 1.1.0 agent that sends no clip keeps\nworking unchanged and simply enrolls nothing.\n\nIt exists because `/v1` otherwise carries no audio at all. The design is a\nhidden listener in the room, and until that exists an `enroll` prompt can\nnever pass, so a voiceprint can never be recorded. This lets the agent,\nwhich already writes call audio to its own bucket, point the detector at\nthe span it just posted a turn for.\n\n`uri` is fetched under the detector's audio policy: https only, the host\nnamed in CALLBACK_AUDIO_ALLOWED_HOSTS, every resolved address globally\nroutable, no redirects, and a byte cap. The detector reduces the audio to\na voice print and keeps no audio, so a clip is read once and discarded.\n\nA WAV container is detected from its magic bytes, so `pcm_s16le` is the\nright encoding for a .wav as well as for raw samples.",
+      "properties": {
+        "encoding": {
+          "default": "pcm_s16le",
+          "enum": [
+            "pcm_s16le",
+            "flac"
+          ],
+          "title": "Encoding",
+          "type": "string"
+        },
+        "sample_rate_hz": {
+          "default": 16000,
+          "maximum": 48000,
+          "minimum": 8000,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        },
+        "uri": {
+          "maxLength": 8192,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "ClipRef",
+      "type": "object"
+    },
     "Consent": {
       "properties": {
         "ts_ms": {
@@ -1141,6 +1172,37 @@
     },
     "Turn": {
       "$defs": {
+        "ClipRef": {
+          "description": "Where the audio of one turn is, for the detector to fetch.\n\nAdded in 1.2.0. Optional, and a minor bump rather than a major one: the\nversion check compares majors, so a 1.1.0 agent that sends no clip keeps\nworking unchanged and simply enrolls nothing.\n\nIt exists because `/v1` otherwise carries no audio at all. The design is a\nhidden listener in the room, and until that exists an `enroll` prompt can\nnever pass, so a voiceprint can never be recorded. This lets the agent,\nwhich already writes call audio to its own bucket, point the detector at\nthe span it just posted a turn for.\n\n`uri` is fetched under the detector's audio policy: https only, the host\nnamed in CALLBACK_AUDIO_ALLOWED_HOSTS, every resolved address globally\nroutable, no redirects, and a byte cap. The detector reduces the audio to\na voice print and keeps no audio, so a clip is read once and discarded.\n\nA WAV container is detected from its magic bytes, so `pcm_s16le` is the\nright encoding for a .wav as well as for raw samples.",
+          "properties": {
+            "encoding": {
+              "default": "pcm_s16le",
+              "enum": [
+                "pcm_s16le",
+                "flac"
+              ],
+              "title": "Encoding",
+              "type": "string"
+            },
+            "sample_rate_hz": {
+              "default": 16000,
+              "maximum": 48000,
+              "minimum": 8000,
+              "title": "Sample Rate Hz",
+              "type": "integer"
+            },
+            "uri": {
+              "maxLength": 8192,
+              "title": "Uri",
+              "type": "string"
+            }
+          },
+          "required": [
+            "uri"
+          ],
+          "title": "ClipRef",
+          "type": "object"
+        },
         "Role": {
           "enum": [
             "user",
@@ -1174,6 +1236,17 @@
         }
       },
       "properties": {
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClipRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "end_ms": {
           "title": "End Ms",
           "type": "integer"
@@ -1331,5 +1404,5 @@
       "type": "object"
     }
   },
-  "version": "1.1.0"
+  "version": "1.2.0"
 }

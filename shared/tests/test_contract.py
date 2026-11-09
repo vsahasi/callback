@@ -107,7 +107,7 @@ def test_constants():
 
 
 def test_version_and_new_constants():
-    assert CONTRACT_VERSION == "1.1.0"
+    assert CONTRACT_VERSION == "1.2.0"
     assert MOCK_OTP_CODE == "424242"
     assert AUTHORIZE_SERVER_DEADLINE_S == 2.2
 
