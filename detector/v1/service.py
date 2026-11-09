@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from callback_shared.contract import (
@@ -25,6 +26,7 @@ from callback_shared.contract import (
     CallerUpdate,
     ChallengeIssued,
     ChallengeKind,
+    ChallengeState,
     ChallengeStatus,
     Channel,
     EnrollmentResult,
@@ -47,8 +49,11 @@ from callback_shared.contract import (
     Decision as WireDecision,
 )
 
+from detector.analysis.dsp import build_context
+from detector.analysis.voiceprint import VoicePrint, combine_prints, voiceprint_from
 from detector.config import Settings
-from detector.enrolment import VoicePrintStore
+from detector.enrolment import VoicePrintStore, storable_enrolment
+from detector.errors import DetectorError
 from detector.mock import jitter_seconds
 from detector.observability import StructuredLogger
 from detector.v1.challenges import (
@@ -58,6 +63,7 @@ from detector.v1.challenges import (
     make_say,
     new_challenge_id,
 )
+from detector.v1.clips import ClipSource
 from detector.v1.enrollments import (
     ConsentLog,
     EnrollmentRecord,
@@ -152,10 +158,15 @@ class V1Service:
         clock: Callable[[], float] | None = None,
         directory: UserDirectory | None = None,
         otp: OtpBackend | None = None,
+        clips: ClipSource | None = None,
     ) -> None:
         self.settings = settings
         self.clock: Callable[[], float] = clock or time.time
         self.voiceprints = voiceprints
+        # Where enrollment audio comes from. None in Round 2: the hidden
+        # listener is stretch work, so nothing is heard and no print is
+        # written. See detector/v1/clips.py.
+        self.clips = clips
         self.directory = (
             directory
             if directory is not None
@@ -721,9 +732,8 @@ class V1Service:
         result = record.finish(self.registry.now())
         if session.enrollment is record:
             session.enrollment = None
-        # Mock mode writes no print. Real mode would write PR 3's print under
-        # print_identity(user_id, channel) from listener clips: stretch work,
-        # and with no audio in Round 2 no prompt can pass anyway.
+        if result.status == "enrolled":
+            self._store_enrollment_print(session, record)
         self.log(
             "v1_enrollment_completed",
             session_id=session.session_id,
@@ -732,6 +742,123 @@ class V1Service:
             prompts_passed=result.prompts_passed,
         )
         return result
+
+    def _store_enrollment_print(
+        self, session: V1Session, record: EnrollmentRecord
+    ) -> None:
+        """Write the enrolled voice, if anything was heard.
+
+        Ruling section 2.15: "Real-mode prints go into P3's VoicePrintStore
+        under the identity '{user_id}:{channel}'. They are prints, never
+        audio." And "Mock mode always enrolls and writes no print."
+
+        Only reached when the enrollment answered `enrolled`, so consent is
+        recorded, the OTP was verified, and at least five of seven prompts
+        passed. That is a far stronger gate than the operator route's, which
+        is why this replaces an existing print rather than conflicting with
+        it: re-enrolling a vendor who has passed all of that is the intended
+        flow, not an attempt to overwrite someone else's reference.
+
+        Never raises. The ruled answer to `complete` is decided by prompts
+        passed, not by whether a print landed, so a failure here cannot
+        change what the agent is told. That makes it exactly the kind of
+        silent gap this service tries not to have, so every path that ends
+        without a stored print logs why, at `warning` when the enrollment
+        said `enrolled` and a print was expected.
+        """
+
+        if self.settings.mock_mode:
+            return
+
+        def give_up(reason: str, level: str = "warning") -> None:
+            self.log(
+                "v1_enrollment_print_not_stored",
+                level=level,
+                session_id=session.session_id,
+                enrollment_id=record.enrollment_id,
+                reason=reason,
+            )
+
+        if self.clips is None:
+            # Round 2. No listener, so nothing was heard. Not a warning:
+            # it is the documented state of this deployment, and in real
+            # mode no prompt can pass anyway, so this is unreachable until
+            # the listener exists.
+            give_up("no_listener", level="info")
+            return
+
+        now = self.registry.now()
+        prints: list[VoicePrint] = []
+        for challenge in session.challenges.values():
+            prompt = challenge.enroll_prompt
+            if prompt is None or prompt not in record.passed_prompts:
+                continue
+            if challenge.resolve(now).status is not ChallengeState.PASSED:
+                continue
+            clip = self.clips.clip_for(challenge.challenge_id)
+            if clip is None:
+                continue
+            samples, rate = clip
+            try:
+                prints.append(voiceprint_from(build_context(samples, rate)))
+            except Exception as exc:  # noqa: BLE001 - one bad clip, not the lot
+                self.log(
+                    "v1_enrollment_clip_unreadable",
+                    level="warning",
+                    session_id=session.session_id,
+                    challenge_id=challenge.challenge_id,
+                    error=type(exc).__name__,
+                )
+
+        if not prints:
+            give_up("no_clips_for_passed_prompts")
+            return
+
+        try:
+            combined = combine_prints(prints)
+        except ValueError:
+            # Clips measured on different frequency grids. Averaging them
+            # would line up different frequencies, so the voiceprint layer
+            # refuses and nothing is stored.
+            give_up("clips_on_different_frequency_grids")
+            return
+
+        if combined is None:
+            give_up("nothing_to_combine")
+            return
+
+        enrolment = storable_enrolment(
+            record.user_id,
+            combined,
+            source="listener",
+            channel=record.channel.value,
+            label=f"v1 enrollment, {len(prints)} of {record.prompts_required} prompts",
+            at=datetime.fromtimestamp(now, tz=UTC),
+        )
+        if enrolment is None:
+            # Storing it would leave voice_match inconclusive on every future
+            # call while the vendor looked enrolled.
+            give_up("combined_print_not_comparable")
+            return
+
+        try:
+            self.voiceprints.put(enrolment, replace=True)
+        except DetectorError as exc:
+            # A full store, or a backend that cannot be written. The agent is
+            # still told `enrolled`, because that is the ruled answer, so this
+            # line is the only record that the print is missing.
+            give_up(f"store_refused:{exc.message}")
+            return
+
+        self.log(
+            "v1_enrollment_print_stored",
+            session_id=session.session_id,
+            enrollment_id=record.enrollment_id,
+            channel=record.channel.value,
+            quality=enrolment.quality.value,
+            clips=len(prints),
+            voiced_seconds=round(combined.voiced_seconds, 2),
+        )
 
     def _forget_session(self, session: V1Session) -> None:
         """An evicted session takes its enrollments, completed ones too."""

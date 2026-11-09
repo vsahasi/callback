@@ -52,6 +52,7 @@ later comparison inconclusive.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -64,6 +65,7 @@ __all__ = [
     "LTAS_BAND_LO",
     "LTAS_MIN_BINS",
     "VoicePrint",
+    "combine_prints",
     "voiceprint_from",
     "voiceprint_from_json",
     "voiceprint_to_json",
@@ -203,6 +205,106 @@ def _ltas(ctx: AudioContext, freqs: np.ndarray) -> tuple[np.ndarray, float]:
 
     centred = spectrum - float(np.mean(spectrum))
     return centred, float(freqs[band][0])
+
+
+def combine_prints(prints: Sequence[VoicePrint]) -> VoicePrint | None:
+    """One print from several recordings of the same person.
+
+    An enrolment is usually more than one recording: the `/v1` flow asks seven
+    prompts, and a single four-second clip yields under three seconds of
+    voiced speech, which is thin. More voiced speech is the only thing that
+    makes this comparison less noisy, so combining is worth doing properly.
+
+    Prints are combined rather than audio. Concatenating the clips and
+    measuring once would be marginally better statistically and would mean
+    holding seven recordings of a vendor in memory to do it. The whole reason
+    this module exists is to not do that, so the audio is reduced as it
+    arrives and only prints are kept.
+
+    How each field combines, and how honest each one is:
+
+    `ltas_db` is a voiced-weighted mean of the per-recording spectra. Each is
+    already a mean of log spectra over that recording's speech frames, so a
+    weighted mean of them is the same quantity over the pooled frames, up to
+    the weighting. Re-centred afterwards, because a mean of zero-mean vectors
+    is only zero-mean if the weights are equal.
+
+    `median_f0_hz` is a voiced-weighted mean of the per-recording medians,
+    which is *not* the median of the pooled frames. It is a register
+    estimate, it is more robust than any one clip's, and a talker whose pitch
+    genuinely differs between recordings will land between them rather than
+    at either. Good enough for a cue that ramps over 2.5 to 7.5 semitones.
+
+    Durations sum. `usable` requires every input to be usable, because one
+    unusable recording in the set means one set of numbers that mean nothing.
+    Notes are unioned, in first-seen order.
+
+    Returns None for an empty sequence. Raises `ValueError` when the prints
+    are not on one frequency grid, since averaging across grids would line up
+    different frequencies; the caller has the context to decide whether that
+    is a refusal or a dropped recording.
+    """
+
+    usable_inputs = list(prints)
+    if not usable_inputs:
+        return None
+    if len(usable_inputs) == 1:
+        return usable_inputs[0]
+
+    with_spectra = [print_ for print_ in usable_inputs if print_.has_spectrum]
+    first = with_spectra[0] if with_spectra else usable_inputs[0]
+    for other in with_spectra[1:]:
+        if not first.shares_grid_with(other):
+            raise ValueError(
+                "cannot combine voice prints measured on different frequency "
+                f"grids ({first.bin_hz:.2f} Hz and {other.bin_hz:.2f} Hz)"
+            )
+
+    ltas = _combined_ltas(with_spectra)
+    pitched = [print_ for print_ in usable_inputs if print_.has_pitch]
+
+    return VoicePrint(
+        median_f0_hz=_weighted_mean(
+            [print_.median_f0_hz for print_ in pitched],
+            [print_.voiced_seconds for print_ in pitched],
+        ),
+        voiced_seconds=sum(print_.voiced_seconds for print_ in usable_inputs),
+        speech_seconds=sum(print_.speech_seconds for print_ in usable_inputs),
+        duration_s=sum(print_.duration_s for print_ in usable_inputs),
+        sample_rate=min(print_.sample_rate for print_ in usable_inputs),
+        bin_hz=first.bin_hz,
+        lo_hz=first.lo_hz,
+        ltas_db=tuple(float(value) for value in ltas),
+        usable=all(print_.usable for print_ in usable_inputs),
+        notes=tuple(dict.fromkeys(note for p in usable_inputs for note in p.notes)),
+    )
+
+
+def _combined_ltas(prints: list[VoicePrint]) -> np.ndarray:
+    """Voiced-weighted mean of the spectra, truncated to the shortest."""
+
+    if not prints:
+        return np.zeros(0)
+    size = min(len(print_.ltas_db) for print_ in prints)
+    if size <= 0:
+        return np.zeros(0)
+    stacked = np.vstack([print_.spectrum()[:size] for print_ in prints])
+    weights = np.asarray(
+        [max(print_.voiced_seconds, 0.0) for print_ in prints], dtype=np.float64
+    )
+    if float(np.sum(weights)) <= EPS:
+        weights = np.ones(len(prints), dtype=np.float64)
+    averaged = np.average(stacked, axis=0, weights=weights)
+    return averaged - float(np.mean(averaged))
+
+
+def _weighted_mean(values: list[float], weights: list[float]) -> float:
+    if not values:
+        return 0.0
+    totals = np.asarray([max(weight, 0.0) for weight in weights], dtype=np.float64)
+    if float(np.sum(totals)) <= EPS:
+        return float(np.mean(values))
+    return float(np.average(np.asarray(values, dtype=np.float64), weights=totals))
 
 
 # ------------------------------------------------------------ serialisation

@@ -71,6 +71,7 @@ from detector.analysis.voiceprint import (
 from detector.audio import AudioPolicy, AudioUnavailable, load_span
 from detector.config import Settings
 from detector.errors import DetectorError
+from detector.identity import EVENTS_CHANNEL, candidate_identities, store_identity
 from detector.store import (
     DictBacking,
     StoreFormatError,
@@ -94,6 +95,7 @@ __all__ = [
     "DEFAULT_ENROLMENT_DICT_NAME",
     "DEFAULT_MAX_IDENTITIES",
     "ENROLMENT_FORMAT_VERSION",
+    "EVENTS_CHANNEL",
     "DictVoicePrintStore",
     "Enrolment",
     "EnrolmentConflict",
@@ -102,11 +104,14 @@ __all__ = [
     "InMemoryVoicePrintStore",
     "VoicePrintStore",
     "build_enrolment_router",
+    "candidate_identities",
     "enrolment_from_json",
     "enrolment_to_json",
     "extract_print",
     "quality_of",
+    "storable_enrolment",
     "store_from_settings",
+    "store_identity",
 ]
 
 ENROLMENT_FORMAT_VERSION: Final = 1
@@ -118,6 +123,11 @@ _KEY_PREFIX: Final = "vp:"
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+# The key language lives in detector.identity, so that the audio pipeline can
+# read keys without importing this module's web dependencies. Re-exported here
+# because this is the module that owns the store.
 
 
 # --------------------------------------------------------------------- errors
@@ -166,12 +176,23 @@ class Enrolment:
     #: value reaches the operator's response and the logs.
     source: str
     label: str | None = None
+    #: Which channel the recording came over, or None for an unscoped print.
+    #: Held on the record and not only in the key, so a reviewer looking at a
+    #: stored print can see what it is a print *of*.
+    channel: str | None = None
+
+    @property
+    def key(self) -> str:
+        """Where this record belongs in the store."""
+
+        return store_identity(self.identity, self.channel)
 
     def record(self) -> EnrolmentRecord:
         """The wire view. Carries no feature of the voice."""
 
         return EnrolmentRecord(
             identity=self.identity,
+            channel=self.channel,  # type: ignore[arg-type]
             enrolled_at=self.enrolled_at,
             quality=self.quality,
             voiced_seconds=round(self.voice.voiced_seconds, 3),
@@ -201,6 +222,41 @@ def quality_of(voice: VoicePrint) -> EnrolmentQuality:
     return EnrolmentQuality.GOOD
 
 
+def storable_enrolment(
+    identity: str,
+    voice: VoicePrint,
+    *,
+    source: str,
+    channel: str | None = None,
+    label: str | None = None,
+    at: datetime | None = None,
+) -> Enrolment | None:
+    """A record ready to store, or None when the print is not worth storing.
+
+    One place answers both questions, so the operator route and the `/v1`
+    enrollment flow cannot drift apart about what counts as storable.
+
+    It also keeps `EnrolmentQuality` out of `detector.v1`, which is forbidden
+    from importing the internal contract package at all: the two contract
+    packages define different models under some of the same names, and
+    `tests/v1/test_imports.py` guards the boundary with a blunt textual check
+    rather than trusting anyone to remember which name is which.
+    """
+
+    quality = quality_of(voice)
+    if quality is EnrolmentQuality.UNUSABLE:
+        return None
+    return Enrolment(
+        identity=identity,
+        voice=voice,
+        enrolled_at=at or _now(),
+        quality=quality,
+        source=source,
+        label=label,
+        channel=channel,
+    )
+
+
 def enrolment_to_json(enrolment: Enrolment) -> dict[str, Any]:
     return {
         "format": ENROLMENT_FORMAT_VERSION,
@@ -210,6 +266,7 @@ def enrolment_to_json(enrolment: Enrolment) -> dict[str, Any]:
         "quality": enrolment.quality.value,
         "source": enrolment.source,
         "label": enrolment.label,
+        "channel": enrolment.channel,
     }
 
 
@@ -235,6 +292,10 @@ def enrolment_from_json(doc: dict[str, Any]) -> Enrolment:
             quality=EnrolmentQuality(str(doc["quality"])),
             source=str(doc["source"]),
             label=None if doc.get("label") is None else str(doc["label"]),
+            # Absent in a record written before prints were keyed by channel.
+            # Tolerated rather than refused, because such a record is stored
+            # under a bare key and reads correctly as unscoped.
+            channel=None if doc.get("channel") is None else str(doc["channel"]),
         )
     except StoreFormatError:
         raise
@@ -317,7 +378,7 @@ class InMemoryVoicePrintStore(VoicePrintStore):
             return self._records.get(normalise_identity(identity))
 
     def put(self, enrolment: Enrolment, *, replace: bool) -> None:
-        key = normalise_identity(enrolment.identity)
+        key = enrolment.key
         with self._lock:
             existing = key in self._records
             if existing and not replace:
@@ -401,7 +462,7 @@ class DictVoicePrintStore(VoicePrintStore):
         return enrolment_from_json(doc)
 
     def put(self, enrolment: Enrolment, *, replace: bool) -> None:
-        key = self._key(enrolment.identity)
+        key = self._key(enrolment.key)
         doc = enrolment_to_json(enrolment)
         try:
             existing = self.backing.get(key) is not None
@@ -661,6 +722,7 @@ def build_enrolment_router(
             quality=quality,
             source=source,
             label=payload.label,
+            channel=payload.channel,
         )
         try:
             chosen.put(enrolment, replace=payload.replace)
@@ -684,9 +746,11 @@ def build_enrolment_router(
                 401, ErrorCode.UNAUTHORIZED, "missing or invalid bearer token", None
             )
         identity = normalise_identity(payload.identity)
-        found = chosen.get(identity) if chosen is not None else None
+        key = store_identity(identity, payload.channel)
+        found = chosen.get(key) if chosen is not None else None
         answer = EnrolmentStatus(
             identity=identity,
+            channel=payload.channel,
             enrolled=found is not None,
             record=found.record() if found is not None else None,
         )
@@ -702,8 +766,11 @@ def build_enrolment_router(
                 401, ErrorCode.UNAUTHORIZED, "missing or invalid bearer token", None
             )
         identity = normalise_identity(payload.identity)
-        deleted = chosen.delete(identity) if chosen is not None else False
-        answer = ErasureResponse(identity=identity, deleted=deleted)
+        key = store_identity(identity, payload.channel)
+        deleted = chosen.delete(key) if chosen is not None else False
+        answer = ErasureResponse(
+            identity=identity, channel=payload.channel, deleted=deleted
+        )
         return JSONResponse(content=answer.model_dump(mode="json"))
 
     return router

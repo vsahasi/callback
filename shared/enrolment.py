@@ -42,13 +42,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, Field
 
 from shared.contract import AudioRef, StrictModel
 
 __all__ = [
+    "CHANNELS",
     "ENROLMENT_VERSION",
     "MAX_IDENTITY_LENGTH",
     "MIN_CONFIDENT_VOICED_SECONDS",
@@ -65,9 +66,19 @@ __all__ = [
 
 # Bumped whenever any model here changes shape. Independent of
 # CONTRACT_VERSION on purpose: the agent pins that one.
-ENROLMENT_VERSION: Final = "0.1.0-provisional"
+ENROLMENT_VERSION: Final = "0.2.0-provisional"
 
 MAX_IDENTITY_LENGTH: Final = 128
+
+# The channels a print can be stored against. These are the members of
+# `callback_shared.contract.Channel`, written out rather than imported so this
+# module stays independent of the agent contract; a test asserts the two lists
+# agree, so adding a channel there fails here rather than drifting.
+#
+# Restricted rather than free text on purpose. A print written under a channel
+# nobody reads is invisible, and an invisible print is the exact failure this
+# whole surface exists to remove: `voice_match` quietly not running.
+CHANNELS: Final = ("phone", "browser")
 
 # Below this much voiced speech, `detector.analysis.voice` refuses to call any
 # comparison confident, so every call against such a reference comes back
@@ -104,6 +115,13 @@ class EnrolmentRequest(StrictModel):
         description="The claimed_user_id this reference belongs to. Matched "
         "byte for byte after trimming whitespace.",
     )
+    channel: Literal["phone", "browser"] | None = Field(
+        default=None,
+        description="Which channel this recording came over. A print is "
+        "stored per channel, because a handset and a browser microphone put "
+        "a different response in front of the same voice. Omit it and the "
+        "print is stored unscoped, which the phone path falls back to.",
+    )
     audio: AudioRef = Field(
         description="Where the enrolment recording is. Fetched under the same "
         "policy as call audio, so the host must be allowlisted."
@@ -131,6 +149,11 @@ class IdentityBody(StrictModel):
     """
 
     identity: str = Field(min_length=1, max_length=MAX_IDENTITY_LENGTH)
+    channel: Literal["phone", "browser"] | None = Field(
+        default=None,
+        description="Which channel's print to read or erase. Omit it for the "
+        "unscoped one.",
+    )
 
 
 class EnrolmentRecord(StrictModel):
@@ -140,6 +163,7 @@ class EnrolmentRecord(StrictModel):
     """
 
     identity: str
+    channel: Literal["phone", "browser"] | None = None
     enrolled_at: datetime
     quality: EnrolmentQuality
     voiced_seconds: float = Field(
@@ -176,6 +200,7 @@ class EnrolmentStatus(StrictModel):
 
     enrolment_version: str = ENROLMENT_VERSION
     identity: str
+    channel: Literal["phone", "browser"] | None = None
     enrolled: bool
     record: EnrolmentRecord | None = None
 
@@ -190,6 +215,7 @@ class ErasureResponse(StrictModel):
 
     enrolment_version: str = ENROLMENT_VERSION
     identity: str
+    channel: Literal["phone", "browser"] | None = None
     deleted: bool
 
 

@@ -62,6 +62,7 @@ from detector.pipeline import AudioPipeline
 from detector.review import mount as mount_review
 from detector.state import DetectorEngine
 from detector.v1 import build_v1_router
+from detector.v1.clips import ClipSource
 from detector.v1.service import V1Service
 from detector.verification import build_verification_router
 from shared.contract import (
@@ -165,6 +166,7 @@ def create_app(
     log_stream: TextIO | None = None,
     voiceprints: VoicePrintStore | None = None,
     v1_clock: Callable[[], float] | None = None,
+    v1_clips: ClipSource | None = None,
 ) -> FastAPI:
     """Build the app. Tests call this directly with explicit settings.
 
@@ -180,6 +182,11 @@ def create_app(
     `v1_clock` is the /v1 registry clock, epoch seconds. It defaults to
     `time.time`; the /v1 tests hand in a fake one to step through session
     expiry, challenge timing and the cloned-voice spoof rise.
+
+    `v1_clips` is where /v1 enrollment audio comes from. It is None in every
+    deployment today, because the hidden listener that would supply it is
+    stretch work, so a /v1 enrollment records consent and writes no print.
+    See `detector/v1/clips.py`.
     """
 
     resolved = settings or Settings.from_env()
@@ -257,6 +264,7 @@ def create_app(
         voiceprints=prints,
         clock=v1_clock or time.time,
         require_token=require_token,
+        clips=v1_clips,
     )
     v1: V1Service = v1_router.service  # type: ignore[attr-defined]
     app.include_router(v1_router)

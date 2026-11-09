@@ -54,6 +54,7 @@ from detector.analysis.engine import AnalysisEngine
 from detector.analysis.voiceprint import VoicePrint
 from detector.audio import AudioPolicy, AudioUnavailable, LoadedAudio, load_span
 from detector.config import Settings
+from detector.identity import EVENTS_CHANNEL, candidate_identities
 from shared.contract import EventRequest, EventType, Factor
 
 if TYPE_CHECKING:  # pragma: no cover - import for typing only
@@ -101,6 +102,7 @@ class AudioPipeline:
         client: httpx.AsyncClient | None = None,
         voiceprints: VoicePrintStore | None = None,
         identity_of: Callable[[str], str | None] | None = None,
+        channel: str | None = EVENTS_CHANNEL,
     ) -> None:
         self.policy = AudioPolicy.from_settings(settings)
         self.mock_mode = settings.mock_mode
@@ -109,6 +111,7 @@ class AudioPipeline:
         self._owns_client = client is None
         self._voiceprints = voiceprints
         self._identity_of = identity_of
+        self._channel = channel
 
     @property
     def active(self) -> bool:
@@ -217,11 +220,19 @@ class AudioPipeline:
                 return None
         if not identity:
             return None
-        try:
-            enrolment = self._voiceprints.get(identity)
-        except Exception:
-            # A malformed stored record or an unreachable dict. Logged, not
-            # raised: see the docstring.
-            logger.exception("voice print lookup failed")
-            return None
-        return enrolment.voice if enrolment is not None else None
+
+        # Prints are stored per channel, so this looks for the phone-channel
+        # print first and an unscoped one second. Reading the bare key alone
+        # would miss every print the /v1 enrollment flow writes, which are
+        # keyed "{user_id}:{channel}" by ruling section 2.15.
+        for key in candidate_identities(identity, self._channel):
+            try:
+                enrolment = self._voiceprints.get(key)
+            except Exception:
+                # A malformed stored record or an unreachable dict. Logged,
+                # not raised: see the docstring.
+                logger.exception("voice print lookup failed")
+                return None
+            if enrolment is not None:
+                return enrolment.voice
+        return None

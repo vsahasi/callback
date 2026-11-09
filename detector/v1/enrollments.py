@@ -16,9 +16,22 @@ Consent is an append-only, in-memory record, never an application log line.
 appends a `revoke` row.
 
 Prints: real mode writes into PR 3's VoicePrintStore under
-"{user_id}:{channel}", from listener clips only, which is stretch work. In
-Round 2 real mode has no audio, every prompt fails with no_audio, and nothing
-is written. Mock mode always enrolls and writes no print.
+"{user_id}:{channel}", one print per passed prompt combined into one, from
+listener clips only. Mock mode always enrolls and writes no print, because a
+scripted pass heard no voice.
+
+That write path is built and tested (`V1Service._store_enrollment_print`,
+`tests/v1/test_enrollment_prints.py`) and cannot run yet. Two things have to
+arrive with the listener, and both are its own work rather than something
+missing here:
+
+* clips. Nothing on the wire carries audio, by design: there is no AudioRef
+  in callback_shared and a challenge is polled rather than answered with a
+  body. `detector/v1/clips.py` is the seam and says what to implement.
+* an enroll prompt that can pass. `_outcome_for` returns `no_audio` for every
+  challenge in real mode, so no prompt passes and no enrollment reaches the
+  five it needs. Worth knowing: an enroll prompt needs no transcription to
+  pass, only audio, because it records a voice rather than verifying one.
 """
 
 from __future__ import annotations
@@ -30,6 +43,7 @@ from typing import Literal
 
 from callback_shared.contract import ChallengeState, Channel, EnrollmentResult
 
+from detector.identity import store_identity
 from detector.v1.challenges import ENROLL_PROMPTS, ChallengeRecord
 from detector.v1.errors import NoOpenEnrollment
 
@@ -42,9 +56,14 @@ def new_enrollment_id() -> str:
 
 
 def print_identity(user_id: str, channel: Channel) -> str:
-    """The VoicePrintStore key of one user's print on one channel."""
+    """The VoicePrintStore key of one user's print on one channel.
 
-    return f"{user_id}:{channel.value}"
+    The typed shorthand. `detector.enrolment.store_identity` is the one
+    definition of the key shape, so the side that writes prints and the side
+    that reads them cannot drift apart.
+    """
+
+    return store_identity(user_id, channel.value)
 
 
 @dataclass

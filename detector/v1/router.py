@@ -54,6 +54,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from detector.config import Settings
 from detector.enrolment import VoicePrintStore
 from detector.errors import DetectorError
+from detector.v1.clips import ClipSource
 from detector.v1.errors import (
     ContractVersionMismatch,
     InternalError,
@@ -78,11 +79,21 @@ def build_v1_router(
     clock: Callable[[], float] | None = None,
     require_token: Callable[..., None],
     directory: UserDirectory | None = None,
+    clips: ClipSource | None = None,
 ) -> APIRouter:
-    """The /v1 routes over a fresh `V1Service`, which is `router.service`."""
+    """The /v1 routes over a fresh `V1Service`, which is `router.service`.
+
+    `clips` is where enrollment audio comes from. None, which is every
+    deployment today, means nothing is heard and no print is written; see
+    `detector/v1/clips.py` for what the listener has to provide.
+    """
 
     service = V1Service(
-        settings, voiceprints=voiceprints, clock=clock, directory=directory
+        settings,
+        voiceprints=voiceprints,
+        clock=clock,
+        directory=directory,
+        clips=clips,
     )
 
     class V1Route(APIRoute):
