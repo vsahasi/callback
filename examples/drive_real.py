@@ -58,6 +58,7 @@ from shared.client import new_session_id
 RATE = 8000
 DURATION_S = 4.0
 IDENTITY = "cfo@northwind.example"
+CHANNEL = "phone"
 
 # A different realisation of the same talker: same voice, different words.
 # Enrolling the exact recording the caller then sends would score a perfect
@@ -241,6 +242,10 @@ async def enrol(client: httpx.AsyncClient) -> str:
         "/enrol/voice",
         json={
             "identity": IDENTITY,
+            # Callback telephones the vendor, so this is a phone-channel
+            # print. A browser print would never be used to judge this call:
+            # the handset response is part of what the spectral cue measures.
+            "channel": CHANNEL,
             "audio": audio_ref(reference),
             "label": "a trusted earlier call with this vendor",
             "replace": True,
@@ -250,13 +255,17 @@ async def enrol(client: httpx.AsyncClient) -> str:
         return f"enrolment failed: HTTP {response.status_code} {response.text[:200]}"
     record = response.json()["record"]
     return (
-        f"enrolled {record['identity']} from {record['duration_s']:.0f}s of audio, "
-        f"{record['voiced_seconds']:.1f}s of it voiced, quality {record['quality']}"
+        f"enrolled {record['identity']} on the {record['channel']} channel from "
+        f"{record['duration_s']:.0f}s of audio, {record['voiced_seconds']:.1f}s of "
+        f"it voiced, quality {record['quality']}"
     )
 
 
 async def erase(client: httpx.AsyncClient) -> None:
-    await client.post("/enrol/voice/erase", json={"identity": IDENTITY})
+    for channel in (CHANNEL, None):
+        await client.post(
+            "/enrol/voice/erase", json={"identity": IDENTITY, "channel": channel}
+        )
 
 
 async def run(args: argparse.Namespace) -> int:

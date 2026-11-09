@@ -44,6 +44,7 @@ from detector.analysis.synthetic import SpeechStyle, live_speech, replay_of, tts
 from detector.analysis.voice import analyse_voice_match
 from detector.analysis.voiceprint import (
     VoicePrint,
+    combine_prints,
     voiceprint_from,
     voiceprint_from_json,
     voiceprint_to_json,
@@ -60,9 +61,10 @@ from detector.enrolment import (
     enrolment_to_json,
     quality_of,
 )
+from detector.identity import candidate_identities, store_identity
 from detector.store import StoreFormatError
 from shared.contract import Decision, FactorName, FactorVerdict, NextAction
-from shared.enrolment import EnrolmentQuality, enrolment_schema_bundle
+from shared.enrolment import CHANNELS, EnrolmentQuality, enrolment_schema_bundle
 from tests.contract.test_real_mode import AUTH, RATE, pcm_data_uri, real_settings
 from tests.contract.test_store import FakeModalDict
 
@@ -108,7 +110,9 @@ def audio_ref(samples: np.ndarray, rate: int = RATE) -> dict[str, object]:
 
 
 def an_enrolment(
-    identity: str = IDENTITY, samples: np.ndarray | None = None
+    identity: str = IDENTITY,
+    samples: np.ndarray | None = None,
+    channel: str | None = None,
 ) -> Enrolment:
     voice = print_of(enrol_audio() if samples is None else samples)
     return Enrolment(
@@ -118,6 +122,7 @@ def an_enrolment(
         quality=quality_of(voice),
         source="data:",
         label="invoice call 2026-03-02",
+        channel=channel,
     )
 
 
@@ -872,3 +877,269 @@ def test_the_contract_snapshot_is_untouched_by_this_surface() -> None:
 
     assert recorded["contract_version"] == CONTRACT_VERSION
     assert recorded == json.loads(json.dumps(schema_bundle()))
+
+
+# --------------------------------------------- combining several recordings
+
+
+def test_combining_nothing_is_none() -> None:
+    assert combine_prints([]) is None
+
+
+def test_combining_one_print_returns_it_unchanged() -> None:
+    only = print_of(enrol_audio())
+    assert combine_prints([only]) is only
+
+
+def test_combining_pools_the_voiced_speech() -> None:
+    """The reason to combine at all: one clip is thin, several are not."""
+
+    parts = [print_of(live_speech(3.0, RATE, seed=seed)) for seed in (11, 23, 37)]
+    combined = combine_prints(parts)
+
+    assert combined is not None
+    assert combined.voiced_seconds == pytest.approx(
+        sum(part.voiced_seconds for part in parts), abs=0.01
+    )
+    assert combined.duration_s == pytest.approx(9.0, abs=0.1)
+    assert combined.voiced_seconds > max(part.voiced_seconds for part in parts)
+    assert quality_of(combined) is EnrolmentQuality.GOOD
+
+
+def test_a_combined_spectrum_stays_zero_mean_and_on_the_grid() -> None:
+    parts = [print_of(live_speech(3.0, RATE, seed=seed)) for seed in (11, 23)]
+    combined = combine_prints(parts)
+
+    assert combined is not None
+    assert float(np.mean(combined.spectrum())) == pytest.approx(0.0, abs=1e-9)
+    assert combined.bin_hz == parts[0].bin_hz
+    assert combined.lo_hz == parts[0].lo_hz
+    assert combined.shares_grid_with(parts[0])
+
+
+def test_a_combined_print_lands_between_the_registers_it_came_from() -> None:
+    """A weighted mean of medians is a register estimate, not a median of the
+    pooled frames. It must at least sit between the two it came from."""
+
+    low = print_of(live_speech(3.0, RATE, seed=11))
+    high = print_of(live_speech(3.0, RATE, seed=11, style=SpeechStyle(f0_hz=215.0)))
+    combined = combine_prints([low, high])
+
+    assert combined is not None
+    assert low.median_f0_hz < combined.median_f0_hz < high.median_f0_hz
+
+
+def test_combining_across_frequency_grids_refuses() -> None:
+    """Averaging these would line up different frequencies and report the
+    result as a voice. The caller decides what to do about it."""
+
+    first = print_of(enrol_audio())
+    off_grid = replace(first, bin_hz=first.bin_hz * 1.4)
+
+    with pytest.raises(ValueError, match="different frequency"):
+        combine_prints([first, off_grid])
+
+
+def test_one_unusable_recording_makes_the_combination_unusable() -> None:
+    good = print_of(enrol_audio())
+    fragment = print_of(caller_audio()[:800])
+
+    combined = combine_prints([good, fragment])
+
+    assert combined is not None
+    assert not combined.usable
+
+
+def test_a_combined_print_compares_as_well_as_its_parts() -> None:
+    """Combining must not degrade the comparison it exists to improve."""
+
+    parts = [print_of(live_speech(3.0, RATE, seed=seed)) for seed in (11, 23, 37)]
+    combined = combine_prints(parts)
+    assert combined is not None
+
+    probe = build_context(caller_audio(), RATE)
+    pooled = analyse_voice_match(probe, combined)
+    single = analyse_voice_match(probe, parts[0])
+
+    assert pooled.verdict is FactorVerdict.PASS
+    assert pooled.score >= single.score - 0.05
+
+
+# -------------------------------------------------------- keys and channels
+
+
+def test_a_print_is_keyed_by_channel_when_one_is_given() -> None:
+    assert store_identity(IDENTITY) == IDENTITY
+    assert store_identity(IDENTITY, "phone") == f"{IDENTITY}:phone"
+    assert store_identity("  spaced  ", "browser") == "spaced:browser"
+
+
+def test_the_phone_path_prefers_the_phone_print_then_the_unscoped_one() -> None:
+    assert candidate_identities(IDENTITY) == (f"{IDENTITY}:phone", IDENTITY)
+    assert candidate_identities(IDENTITY, None) == (IDENTITY,)
+    assert candidate_identities("   ") == ()
+
+
+def test_a_browser_print_is_never_offered_to_a_phone_call() -> None:
+    """The two keys exist to keep a handset and a microphone apart. Falling
+    back across them would measure the channel and call it the voice."""
+
+    assert f"{IDENTITY}:browser" not in candidate_identities(IDENTITY)
+
+
+def test_the_channel_list_matches_the_agent_contract() -> None:
+    """Written out rather than imported, so this is what stops it drifting."""
+
+    from callback_shared.contract import Channel
+
+    assert sorted(CHANNELS) == sorted(member.value for member in Channel)
+
+
+async def test_enrolling_with_a_channel_stores_it_under_the_channel_key(
+    bare_client: httpx.AsyncClient, store: InMemoryVoicePrintStore
+) -> None:
+    response = await bare_client.post(
+        "/enrol/voice",
+        json={
+            "identity": IDENTITY,
+            "channel": "phone",
+            "audio": audio_ref(enrol_audio()),
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["record"]["channel"] == "phone"
+    assert store.get(f"{IDENTITY}:phone") is not None
+    assert store.get(IDENTITY) is None
+
+
+async def test_the_two_channels_do_not_collide(
+    bare_client: httpx.AsyncClient, store: InMemoryVoicePrintStore
+) -> None:
+    for channel in ("phone", "browser"):
+        posted = await bare_client.post(
+            "/enrol/voice",
+            json={
+                "identity": IDENTITY,
+                "channel": channel,
+                "audio": audio_ref(enrol_audio()),
+            },
+        )
+        assert posted.status_code == 200, posted.text
+
+    assert len(store) == 2
+    assert store.get(f"{IDENTITY}:phone") is not None
+    assert store.get(f"{IDENTITY}:browser") is not None
+
+
+async def test_status_and_erase_are_per_channel(
+    bare_client: httpx.AsyncClient, store: InMemoryVoicePrintStore
+) -> None:
+    await bare_client.post(
+        "/enrol/voice",
+        json={
+            "identity": IDENTITY,
+            "channel": "phone",
+            "audio": audio_ref(enrol_audio()),
+        },
+    )
+
+    scoped = await bare_client.post(
+        "/enrol/voice/status", json={"identity": IDENTITY, "channel": "phone"}
+    )
+    assert scoped.json()["enrolled"] is True
+    assert scoped.json()["channel"] == "phone"
+
+    unscoped = await bare_client.post(
+        "/enrol/voice/status", json={"identity": IDENTITY}
+    )
+    assert unscoped.json()["enrolled"] is False
+
+    wrong = await bare_client.post(
+        "/enrol/voice/erase", json={"identity": IDENTITY, "channel": "browser"}
+    )
+    assert wrong.json()["deleted"] is False
+    assert store.get(f"{IDENTITY}:phone") is not None
+
+    right = await bare_client.post(
+        "/enrol/voice/erase", json={"identity": IDENTITY, "channel": "phone"}
+    )
+    assert right.json()["deleted"] is True
+    assert len(store) == 0
+
+
+async def test_an_unknown_channel_is_refused(
+    bare_client: httpx.AsyncClient, store: InMemoryVoicePrintStore
+) -> None:
+    """A print under a channel nobody reads is invisible, and an invisible
+    print is the failure this whole surface exists to remove."""
+
+    response = await bare_client.post(
+        "/enrol/voice",
+        json={
+            "identity": IDENTITY,
+            "channel": "carrier-pigeon",
+            "audio": audio_ref(enrol_audio()),
+        },
+    )
+
+    assert response.status_code == 422
+    assert len(store) == 0
+
+
+async def test_a_channel_scoped_print_is_found_by_a_call(
+    store: InMemoryVoicePrintStore,
+) -> None:
+    """The integration the shared key language exists for.
+
+    A print written under "{identity}:phone", which is what the /v1
+    enrollment flow writes, has to be found by the pipeline on the /events
+    path. Reading the bare key alone used to miss every one of them.
+    """
+
+    store.put(an_enrolment(channel="phone"), replace=False)
+    app = create_app(real_settings(), voiceprints=store)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://channel.test",
+        headers=AUTH,
+    ) as client:
+        body = await Call(client, "sess-channel-scoped").run(caller_audio())
+
+    assert factor(body, FactorName.VOICE_MATCH)["verdict"] == FactorVerdict.PASS.value
+    assert body["decision"] == Decision.ALLOW.value
+
+
+async def test_an_unscoped_print_still_answers_a_call(
+    store: InMemoryVoicePrintStore,
+) -> None:
+    """The operator route writes one of these when given no channel, and the
+    development path depends on it still being found."""
+
+    store.put(an_enrolment(), replace=False)
+    app = create_app(real_settings(), voiceprints=store)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://unscoped.test",
+        headers=AUTH,
+    ) as client:
+        body = await Call(client, "sess-unscoped").run(caller_audio())
+
+    assert factor(body, FactorName.VOICE_MATCH)["verdict"] == FactorVerdict.PASS.value
+
+
+async def test_a_browser_print_does_not_answer_a_phone_call(
+    store: InMemoryVoicePrintStore,
+) -> None:
+    store.put(an_enrolment(channel="browser"), replace=False)
+    app = create_app(real_settings(), voiceprints=store)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://browser.test",
+        headers=AUTH,
+    ) as client:
+        body = await Call(client, "sess-browser-only").run(caller_audio())
+
+    assert (
+        factor(body, FactorName.VOICE_MATCH)["verdict"] == FactorVerdict.NOT_RUN.value
+    )
