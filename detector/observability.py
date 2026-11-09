@@ -1162,7 +1162,7 @@ UNMATCHED_ENDPOINT = "/unmatched"
 _SESSION_SEGMENT = "/api/sessions/"
 _V1_REVIEW_SEGMENT = "/api/v1/sessions/"
 
-#: The agent contract's routes (callback_shared 1.1.0, detector/v1). create_app
+#: The agent contract's routes (callback_shared 1.2.0, detector/v1). create_app
 #: registers them as known endpoints. Ids in a /v1 path collapse to these
 #: templates, so a session, challenge or user id never becomes a metric label
 #: or a logged path.

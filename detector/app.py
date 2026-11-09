@@ -5,7 +5,7 @@ Endpoints:
     GET  /factors/{session_id}   current factor breakdown for a session
     GET  /healthz                liveness, contract version, mock flag
 
-The agent contract, callback_shared 1.1.0, is served under /v1 by
+The agent contract, callback_shared 1.2.0, is served under /v1 by
 detector.v1. Its routes share the bearer check below and also need
 X-Contract-Version.
 
@@ -256,7 +256,7 @@ def create_app(
 
     require_token = make_require_token(resolved)
 
-    # The agent contract, callback_shared 1.1.0. After the enrolment router so
+    # The agent contract, callback_shared 1.2.0. After the enrolment router so
     # /v1 enrollments write into the same voice print store, and before the
     # review mount so the observability middleware wraps it.
     v1_router = build_v1_router(

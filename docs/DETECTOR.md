@@ -25,7 +25,7 @@ inference.
 
 ## `/v1`: the agent contract
 
-The agent talks to this service over `callback_shared` 1.1.0
+The agent talks to this service over `callback_shared` 1.2.0
 (`shared/src/callback_shared/contract.py`), served under `/v1` by
 `detector/v1`. That file is the only contract between the two sides; the
 final contract ruling of 2026-11-07 settled it. Everything else on this page
@@ -33,10 +33,10 @@ final contract ruling of 2026-11-07 settled it. Everything else on this page
 dev API, which the agent never calls.
 
 Every `/v1` request needs `Authorization: Bearer <DETECTOR_TOKEN>` (checked
-first) and `X-Contract-Version: 1.1.0`. A missing header or another major
+first) and `X-Contract-Version: 1.2.0`. A missing header or another major
 version is a 400 `contract_version_mismatch`; another minor or patch version
 is served, with one warning per version string. Every response carries
-`X-Contract-Version: 1.1.0`, and every non-2xx body is callback_shared's
+`X-Contract-Version: 1.2.0`, and every non-2xx body is callback_shared's
 `ErrorResponse{contract_version, error: {code, message, detail}}`, which never
 echoes an input value.
 
@@ -82,7 +82,7 @@ query strings. `make run` passes it too.
 A quick check by hand:
 
 ```bash
-H=(-H "Authorization: Bearer dev-local" -H "X-Contract-Version: 1.1.0")
+H=(-H "Authorization: Bearer dev-local" -H "X-Contract-Version: 1.2.0")
 curl -s "${H[@]}" "localhost:8000/v1/users?name=Eric%20Catalano"
 curl -s "${H[@]}" -H "X-Callback-Scenario: real_cfo" -H "Content-Type: application/json" \
   -d '{"room":"r1","caller_identity":"sip_x","claimed_user_id":"u_eric","channel":"phone"}' \
@@ -286,7 +286,7 @@ path resolves to DENY:
 ## Layout
 
 ```
-shared/src/callback_shared/contract.py  The agent contract, callback_shared 1.1.0
+shared/src/callback_shared/contract.py  The agent contract, callback_shared 1.2.0
 detector/v1/           The agent contract's routes: users, sessions, challenges,
                        OTP, the authorize policy, enrollment (see /v1 above)
 tests/v1/              The /v1 suites, the five demo calls, log hygiene

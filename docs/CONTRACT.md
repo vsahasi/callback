@@ -1,7 +1,7 @@
 # The detector contract
 
 > This describes the detector's internal `/events` dev API. The agent contract is
-> `callback_shared` 1.1.0 (`shared/src/callback_shared/contract.py`), served under
+> `callback_shared` 1.2.0 (`shared/src/callback_shared/contract.py`), served under
 > `/v1`; see `docs/DETECTOR.md`.
 
 For Veer, so the LiveKit agent can be written against this without reading the

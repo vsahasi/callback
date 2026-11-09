@@ -1,4 +1,4 @@
-"""Fixtures for the /v1 agent contract (callback_shared 1.1.0).
+"""Fixtures for the /v1 agent contract (callback_shared 1.2.0).
 
 The app runs in process over ASGI with jitter off, a fake registry clock, a
 captured log stream, and the users_on_file example from the final ruling

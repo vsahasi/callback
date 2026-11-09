@@ -1,7 +1,7 @@
-"""The /v1 router: callback_shared 1.1.0, the agent contract.
+"""The /v1 router: callback_shared 1.2.0, the agent contract.
 
 Every route needs the bearer token and `X-Contract-Version` (auth first, then
-the version), and every response carries `X-Contract-Version: 1.1.0`, errors
+the version), and every response carries `X-Contract-Version: 1.2.0`, errors
 included. A non-2xx body is always callback_shared's `ErrorResponse`.
 
 The routes are thin. All /v1 state lives in one `V1Service`

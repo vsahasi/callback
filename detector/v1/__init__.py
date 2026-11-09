@@ -1,4 +1,4 @@
-"""The agent contract, callback_shared 1.1.0, served under /v1.
+"""The agent contract, callback_shared 1.2.0, served under /v1.
 
 Imports callback_shared only, never the internal shared.contract: the two
 define different models under the same names, and the /v1 wire is the shared
