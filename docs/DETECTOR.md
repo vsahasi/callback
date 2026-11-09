@@ -302,6 +302,7 @@ detector/scoring.py    Risk blending, thresholds, fatal-factor rule
 detector/mock.py       The five scripted scenarios
 detector/audio.py      Fetching and decoding a span, and what it refuses
 detector/enrolment.py  Reference voices: the store and the endpoint
+detector/identity.py   How a print is keyed, and where to look for it
 detector/pipeline.py   Span to factors, off the event loop
 detector/analysis/     The classical detectors, numpy only
 detector/store.py      Session store: in memory, or modal.Dict
@@ -467,9 +468,66 @@ for a possible collision, and those are not the same size: a missed lookup
 leaves `voice_match` unrun and denies more often, while a collision compares
 one vendor against another vendor's voice.
 
+**A print is stored per channel.** Ruling section 2.15: each channel enrols
+separately, under the key `{identity}:{channel}`. That is not bookkeeping. A
+handset and a browser microphone put a different frequency response in front
+of the same larynx, and the spectral half of the comparison is confounded by
+the channel about as much as by the talker, so a browser print judging a
+phone call would be measuring the handset.
+
+Pass `channel` on any of the three routes to read or write a scoped print.
+Omit it and the print is unscoped, which is the development and demo path. A
+call on `/events` is a phone call, so it looks for `{identity}:phone` first
+and an unscoped print second, and never falls back to a browser print:
+missing a print costs a step-up, using the wrong one costs the property the
+signal is there to provide. `detector/identity.py` is the one definition of
+all of that.
+
+Several recordings of one person combine into one print, weighted by how
+much voiced speech each held, which is the only thing that makes this
+comparison less noisy. A single four-second clip yields under three seconds
+of voiced speech.
+
 By default prints live in process memory and a restart loses them all. Set
 `CALLBACK_ENROLMENT_DICT_NAME` to keep them in a `modal.Dict` across deploys
 and replicas.
+
+### Enrolment on `/v1`, and why no print lands there yet
+
+Two surfaces write into one store. `POST /enrol/voice` above is an operator
+tool, outside the agent contract; the ruling is explicit that it "must not
+enroll a real person until it also requires a consent record, which is
+post-Round 2 work". The agent-facing flow is `POST /v1/enrollments`: a
+verified code, the consent text read out and agreed to, then seven `enroll`
+prompts, and `enrolled` at five of seven.
+
+That flow now writes a print. One print per passed prompt, combined, stored
+under `{user_id}:{channel}`, replacing whatever was there, because consent
+plus a verified code plus five passed prompts is a far stronger gate than the
+operator route's. `DELETE /v1/enrollments/{user_id}` erases both channels.
+
+**It cannot run yet, and not because of anything missing in it.** `/v1` is
+built around a hidden listener: the detector joins the LiveKit room, hears the
+caller, and resolves challenges from what it heard. Nothing on the wire
+carries audio, by design, so there is no field for the agent to hand over a
+clip. The listener is stretch work and is not in Round 2, so two things are
+absent:
+
+* **clips.** `detector/v1/clips.py` is the seam, and its docstring is the
+  contract for whoever writes the listener: keyed by `challenge_id`, mono
+  samples and a rate, held only until the enrollment completes.
+* **an enroll prompt that can pass.** `_outcome_for` returns `no_audio` for
+  every challenge in real mode, so nothing reaches five passes. Worth knowing
+  when that gets wired: an enroll prompt needs no transcription to pass, only
+  audio, because it records a voice rather than verifying one.
+
+Everything between a clip and a stored print is real code with tests on it
+(`tests/v1/test_enrollment_prints.py`, driven by a fake clip source). When
+the listener lands it implements `ClipSource` and is passed to `create_app`
+as `v1_clips`. Nothing else changes.
+
+Until then the way to get a print in front of `voice_match` is the operator
+route with a `channel`, which is what the demo does.
 
 ### What this does not do
 

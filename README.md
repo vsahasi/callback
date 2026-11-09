@@ -29,7 +29,9 @@ The detector answers one narrow question: is the voice on the line really the en
 It runs in two modes:
 
 - Mock mode needs no model and no audio. It plays one of five scripted calls through the real state machine and the real scoring code, so you can run against it without the models.
-- Real mode fetches each speech span, decodes it and measures it with classical signal processing in `detector/analysis`. No trained model is in the serving path yet. Real mode can't match a voice to an enrolled person yet either: there is no enrolment store, so that signal reports `not_run` and the call is judged on the other four.
+- Real mode fetches each speech span, decodes it and measures it with classical signal processing in `detector/analysis`. No trained model is in the serving path yet. All five signals run once the person has a reference voice stored; until then voice match reports `not_run` and the call is judged on the other four, which is how a different person reading the attacker's script used to be allowed.
+
+Enrolling someone stores a pitch and a spectral envelope, never the recording, and a separate print per channel because a handset and a browser microphone put a different response in front of the same voice. `POST /enrol/voice` is the operator route; the agent's own `POST /v1/enrollments` writes into the same store behind the consent record and a verified SMS code, and lands a print once the hidden listener exists to hear the prompts.
 
 The detector also has a bank-detail check. It compares spoken digits against an expected account number, and the expected number never appears in a response, a log line or an error body. `docs/DETECTOR.md` covers it. It is off unless `CALLBACK_BANK_VERIFY_ENABLED=1`, and the agent never calls it.
 
@@ -115,7 +117,21 @@ CALLBACK_API_TOKEN=kit-test CALLBACK_MOCK_MODE=0 CALLBACK_AUDIO_ENABLED=1 uv run
 uv run python examples/drive_real.py --base-url http://127.0.0.1:8021 --token kit-test
 ```
 
-A live caller allows at risk 0.07. The same voice played back down the line denies on its room acoustics. A synthesiser reading the same script denies on the absence of micro-variation. A call with no readable audio denies too, because a caller nothing could be measured against is not a caller who passed.
+That runs every case twice, once with nothing enrolled for the person and again after storing a reference voice, because the difference is the point:
+
+```
+what the caller sent                             not enrolled            enrolled
+a live caller                                      allow 0.07          allow 0.04
+a different person reading the script              allow 0.05      challenge 0.37
+the same voice, played back down the line           deny 0.30           deny 0.17
+a synthesiser reading the same script               deny 0.59      challenge 0.35
+a recording first, then a live voice                deny 0.34           deny 0.20
+no audio at all                                     deny 1.00           deny 1.00
+```
+
+A live caller allows. A replayed recording denies on its room acoustics. A call with no readable audio denies too, because a caller nothing could be measured against is not a caller who passed.
+
+The second row is the one to read: without a reference voice, a different person reading the attacker's script is allowed, because synthesis, replay and liveness all pass a live human at a handset and voice match is the only signal that notices. The fourth row goes the other way, and `docs/DETECTOR.md` explains why that is the intended policy rather than a regression: a clone is supposed to match on voice, and what catches it is the SMS code, not the blended score.
 
 In production the detector fetches audio over https, and only from hosts named in `CALLBACK_AUDIO_ALLOWED_HOSTS`. The address comes from the request, so an unrestricted fetcher would be a way into your network. `docs/DETECTOR.md` has the threat model and every limit.
 
