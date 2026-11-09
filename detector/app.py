@@ -265,6 +265,11 @@ def create_app(
         clock=v1_clock or time.time,
         require_token=require_token,
         clips=v1_clips,
+        # So a /v1 turn can point at its own audio and enrol a voice from it
+        # (contract 1.2.0). The same policy and the same connection pool the
+        # call path uses, so there is one allowlist and one set of limits.
+        audio_policy=audio.policy,
+        client_of=audio.http,
     )
     v1: V1Service = v1_router.service  # type: ignore[attr-defined]
     app.include_router(v1_router)

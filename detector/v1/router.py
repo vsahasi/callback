@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
+import httpx
 from callback_shared.contract import (
     CONTRACT_VERSION as WIRE_CONTRACT_VERSION,
 )
@@ -51,6 +52,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from detector.audio import AudioPolicy
 from detector.config import Settings
 from detector.enrolment import VoicePrintStore
 from detector.errors import DetectorError
@@ -80,6 +82,8 @@ def build_v1_router(
     require_token: Callable[..., None],
     directory: UserDirectory | None = None,
     clips: ClipSource | None = None,
+    audio_policy: AudioPolicy | None = None,
+    client_of: Callable[[], httpx.AsyncClient] | None = None,
 ) -> APIRouter:
     """The /v1 routes over a fresh `V1Service`, which is `router.service`.
 
@@ -94,6 +98,8 @@ def build_v1_router(
         clock=clock,
         directory=directory,
         clips=clips,
+        audio_policy=audio_policy,
+        client_of=client_of,
     )
 
     class V1Route(APIRoute):
@@ -203,7 +209,9 @@ def build_v1_router(
             raise V1ValidationError(
                 detail=f"body.words.w: at most {MAX_WORD_CHARS} characters"
             )
-        service.add_turn(session_id, body)  # no jitter
+        # No jitter. Awaited because a turn may carry an enrollment clip, and
+        # the prompt it answers has to be settled before this returns.
+        await service.add_turn(session_id, body)
         return _no_content()
 
     @router.post("/sessions/{session_id}/events", status_code=204)

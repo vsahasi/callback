@@ -18,6 +18,11 @@ from dataclasses import dataclass, field
 import httpx
 
 TOKEN = "stub-token"
+# The version this fake claims to serve. A literal, not an import from
+# callback_shared, because a fake that reads the real constant could never
+# catch the agent sending the wrong one. test_conformance_stub.py asserts the
+# two agree, so a contract bump fails there and points at this line.
+CONTRACT_VERSION = "1.2.0"
 USER = {
     "user_id": "u_eric",
     "display_name": "Eric Catalano",
@@ -168,7 +173,7 @@ class StubDetector:
     def handle(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("authorization") != f"Bearer {self.token}":
             return _error(401, "unauthorized")
-        if request.headers.get("x-contract-version") != "1.1.0":
+        if request.headers.get("x-contract-version") != CONTRACT_VERSION:
             return _error(400, "contract_version_mismatch")
         parts = request.url.path.strip("/").split("/")
         body = json.loads(request.content) if request.content else None
@@ -298,12 +303,12 @@ def _template(parts: list[str]) -> str:
 
 
 def _json(payload) -> httpx.Response:
-    return httpx.Response(200, json=payload, headers={"X-Contract-Version": "1.1.0"})
+    return httpx.Response(200, json=payload, headers={"X-Contract-Version": CONTRACT_VERSION})
 
 
 def _error(status: int, code: str) -> httpx.Response:
-    body = {"contract_version": "1.1.0", "error": {"code": code, "message": code}}
-    return httpx.Response(status, json=body, headers={"X-Contract-Version": "1.1.0"})
+    body = {"contract_version": CONTRACT_VERSION, "error": {"code": code, "message": code}}
+    return httpx.Response(status, json=body, headers={"X-Contract-Version": CONTRACT_VERSION})
 
 
 def _decide(session_id: str, action: str, decision: dict) -> httpx.Response:

@@ -1,7 +1,7 @@
 """The detector's internal model of its /events dev API and of PR 3.
 
 This is NOT the agent contract. The agent and the detector talk over
-callback_shared 1.1.0 (shared/src/callback_shared/contract.py), which the
+callback_shared 1.2.0 (shared/src/callback_shared/contract.py), which the
 detector serves under /v1 (detector/v1). The final contract ruling of
 2026-11-07 kept this file where it is, unrenamed and unchanged in shape, as
 the model of the root /events, /factors and /enrol/voice routes, Eric's offline

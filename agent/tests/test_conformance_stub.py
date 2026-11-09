@@ -136,7 +136,7 @@ async def test_every_request_carries_the_token_version_and_one_scenario_header(d
     assert seen
     for request in seen:
         assert request.headers["authorization"] == f"Bearer {stub.TOKEN}"
-        assert request.headers["x-contract-version"] == "1.1.0"
+        assert request.headers["x-contract-version"] == stub.CONTRACT_VERSION
         creating = request.method == "POST" and request.url.path == "/v1/sessions"
         assert ("x-callback-scenario" in request.headers) is creating
     assert detector.problems == []

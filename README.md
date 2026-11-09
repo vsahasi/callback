@@ -48,7 +48,7 @@ The detector also has a bank-detail check. It compares spoken digits against an 
 
 <!-- CONTRACT-SECTION -->
 
-The agent and the detection service talk over `callback_shared` 1.1.0 (`shared/src/callback_shared/contract.py`), served by the detector under `/v1`. `docs/CONTRACT.md` describes the detector's internal `/events` API, which the agent does not use.
+The agent and the detection service talk over `callback_shared` 1.2.0 (`shared/src/callback_shared/contract.py`), served by the detector under `/v1`. `docs/CONTRACT.md` describes the detector's internal `/events` API, which the agent does not use.
 
 ## Repo layout
 
