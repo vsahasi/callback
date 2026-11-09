@@ -59,7 +59,22 @@ the long version.
 | --- | --- |
 | `build.py` | measures the audio and writes the page |
 | `page.template.html` | the page, with a `__DATA__` placeholder for the measurements |
+| `hero.py` | draws the README banner from the same audio |
 | `dist/showcase.html` | the built file, gitignored because it rebuilds in seconds |
+
+## The README banner
+
+```sh
+uv run python showcase/hero.py
+```
+
+Writes `docs/assets/hero-light.svg` and `hero-dark.svg`, which the top-level
+README swaps between with a `<picture>` element. The banner is two envelopes
+drawn from the same voice at the same gain: a live caller, and the same
+recording played back down a phone line. Between the live caller's words the
+signal drops to the noise floor. On the replay it does not, because the room
+the recording was played into is still ringing. That is the thing the replay
+detector keys on, and it is visible without reading a number.
 
 To change the wording or the design, edit `page.template.html` and run the
 build again. To change what is measured, edit `callers()` in `build.py`.
