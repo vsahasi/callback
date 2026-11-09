@@ -1,8 +1,15 @@
 # Integrating the voice agent with the detector
 
 > This describes the detector's internal `/events` dev API. The agent contract is
-> `callback_shared` 1.1.0 (`shared/src/callback_shared/contract.py`), served under
+> `callback_shared` 1.2.0 (`shared/src/callback_shared/contract.py`), served under
 > `/v1`; see `docs/DETECTOR.md`.
+>
+> **1.2.0 adds one optional field and asks one thing of the agent.** `Turn.audio`
+> is a `ClipRef` pointing at the audio of that turn. It is what makes a `/v1`
+> voiceprint enrollment possible at all, since nothing else on the wire carries
+> audio and the hidden listener is not in Round 2. A minor bump: the version
+> check compares majors, so sending no clip keeps working exactly as before and
+> simply enrols nothing. See "Enrolling a voice" below.
 
 For Veer. Copy-paste oriented. This is the "how do I use it" guide;
 [`docs/CONTRACT.md`](CONTRACT.md) is the "what does the wire look like"
@@ -636,3 +643,85 @@ nothing but the two flags.
    no auth. Use `verify_credentials()`.
 10. **A decision you did not receive is a DENY.** Still the only rule that
     matters.
+
+
+---
+
+## Enrolling a voice (contract 1.2.0)
+
+This is the one new thing asked of the agent, and it is optional.
+
+`voice_match` is the heaviest signal in the detector's model, 0.35 of the
+weight. It compares the caller against a stored reference, and with no
+reference it does not run at all, which is how a different person reading an
+attacker's script used to be allowed. Giving it a reference needs the
+caller's audio, and in 1.1.0 nothing on the `/v1` wire carried any: the design
+was a hidden listener in the room, and that is not in Round 2.
+
+So `Turn` gained an optional `audio`:
+
+```json
+POST /v1/sessions/{session_id}/turns
+{
+  "role": "user",
+  "text": "four seven two",
+  "start_ms": 1000400,
+  "end_ms": 1003400,
+  "words": [],
+  "interrupted": false,
+  "audio": {
+    "uri": "https://your-bucket.example/sessions/s1/turn-42.pcm",
+    "sample_rate_hz": 8000,
+    "encoding": "pcm_s16le"
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `uri` | An https url, at most 8192 characters. The host must be named in the detector's `CALLBACK_AUDIO_ALLOWED_HOSTS` or the fetch is refused. |
+| `sample_rate_hz` | 8000 to 48000. |
+| `encoding` | `pcm_s16le` or `flac`. A WAV container is detected from its magic bytes, so `pcm_s16le` is right for a `.wav` too. |
+
+Send it or do not. Omitting it is exactly the old behaviour, and the version
+check compares major versions only, so a 1.1.0 agent is served unchanged.
+
+### What the detector does with it
+
+It fetches the clip once, reduces it to a voice print (a median pitch and a
+spectral envelope, a few hundred numbers), and drops the audio. It stores no
+recording, ever. The print lands under `{user_id}:{channel}`, one per channel,
+because a handset and a browser microphone put a different response in front
+of the same voice.
+
+### When it matters
+
+Only on a user turn that answers an open `enroll` challenge. That is the
+whole of it:
+
+* a clip on an **agent** turn is ignored;
+* a clip on a **`digits`, `phrase` or `liveness`** challenge is ignored, and
+  deliberately not even measured. Those challenges ask what was said and by
+  whom. If uploading audio passed one, anyone with the service token could
+  clear a step-up with any recording, so the detector will not do it. An
+  `enroll` prompt is different: it records a voice rather than verifying one;
+* a clip with no open enrollment is ignored. An enrollment needs consent and
+  a verified code first, which has not changed.
+
+So in practice: run the enrollment flow as before, and put `audio` on the
+user turn that answers each of the seven `enroll` prompts. Five that the
+detector can measure, and `complete` answers `enrolled` with a print stored.
+
+### What it costs you if the clip is bad
+
+Nothing that denies a call. An unreachable uri, a host that is not
+allowlisted, a clip with no speech in it: the prompt resolves `failed` with
+reason `no_audio`, which the enrollment counts as a failed try, and a
+`no_audio` failure is never a voice fail. You get the same three tries per
+prompt you already had.
+
+One timing note. The detector fetches the clip before answering your 204, and
+gives the fetch 400 ms. A challenge resolves 700 ms after the turn's receive
+time, and a prompt that has already been read as `failed` must never later
+read as `passed`, so a fetch that outruns that window is dropped. Keep the
+clips small, and keep the bucket near the detector.

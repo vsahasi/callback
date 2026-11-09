@@ -1,23 +1,23 @@
 """Where enrollment audio comes from, and why there is none yet.
 
 `/v1` is built around a hidden listener: the detector joins the LiveKit room,
-hears the caller's track, and resolves challenges from what it heard. Nothing
-on the wire carries audio. There is no `AudioRef` in `callback_shared`, and a
-challenge is issued and then *polled* rather than answered with a body, so
-the agent has no way to hand over a clip even if it wanted to. That is a
-design decision, not an omission.
+hears the caller's track, and resolves challenges from what it heard. The
+listener is S3 stretch work and is not in Round 2 (ruling conflicts 16 and
+21, and the open items in section 6), so in real mode every challenge
+resolves `failed`/`no_audio` unless something else supplies the audio.
 
-The listener is S3 stretch work and is not in Round 2 (ruling conflicts 16
-and 21, and the open items in section 6). So in real mode every challenge
-resolves `failed`/`no_audio`, no enroll prompt can pass, and an enrollment
-can never reach the five passes it needs. There is nothing to make a print
-from, and this module does not pretend otherwise.
+Something else now can. Contract 1.2.0 added `Turn.audio`, so the agent can
+point the detector at the span it just posted a turn for, and an `enroll`
+prompt answered with a measurable clip passes. That path needs nothing from
+this module.
 
-What it does is name the seam, so that the enrollment write path above it is
-real code with tests rather than a comment saying "stretch work". Everything
-from a clip to a stored print is built and exercised. When the listener
-lands, it implements `ClipSource` and gets passed to `V1Service`; nothing
-else has to change.
+This module is the other source: audio the detector heard itself, with no
+upload. It stays because the listener is still the design, it will have
+audio for turns the agent never writes to a bucket, and it is what a passive
+voiceprint will eventually read. `V1Service` works with either source, both,
+or neither.
+
+The contract this sets for whoever writes the listener:
 
 The contract this sets for whoever writes the listener:
 

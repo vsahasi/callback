@@ -78,7 +78,13 @@ from detector.store import (
     StoreUnavailable,
     open_modal_dict,
 )
-from shared.contract import AudioRef, ErrorBody, ErrorCode, ErrorResponse
+from shared.contract import (
+    AudioEncoding,
+    AudioRef,
+    ErrorBody,
+    ErrorCode,
+    ErrorResponse,
+)
 from shared.enrolment import (
     MIN_CONFIDENT_VOICED_SECONDS,
     EnrolmentQuality,
@@ -108,6 +114,7 @@ __all__ = [
     "enrolment_from_json",
     "enrolment_to_json",
     "extract_print",
+    "print_from_clip",
     "quality_of",
     "storable_enrolment",
     "store_from_settings",
@@ -527,6 +534,39 @@ def store_from_settings(settings: Settings) -> VoicePrintStore:
 
 def _measure(samples: Any, sample_rate: int) -> VoicePrint:
     return voiceprint_from(build_context(samples, sample_rate))
+
+
+async def print_from_clip(
+    uri: str,
+    *,
+    sample_rate_hz: int,
+    encoding: str,
+    policy: AudioPolicy,
+    start_ms: int = 0,
+    end_ms: int = 0,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[VoicePrint, str]:
+    """`extract_print` from loose values rather than an `AudioRef`.
+
+    It exists for `detector.v1`, which carries its own `ClipRef` on a turn and
+    is forbidden from importing the internal contract package that `AudioRef`
+    lives in. So the translation happens here, on this side of that boundary,
+    and the fetch, the decode, the allowlist and every limit are the same code
+    the operator route and the call path use.
+
+    `track_id` is synthesised: a /v1 turn names no LiveKit track, and nothing
+    downstream reads it.
+    """
+
+    ref = AudioRef(
+        track_id="v1-turn",
+        start_ms=max(0, start_ms),
+        end_ms=max(0, end_ms),
+        sample_rate_hz=sample_rate_hz,
+        encoding=AudioEncoding(encoding),
+        uri=uri,
+    )
+    return await extract_print(ref, policy, client=client)
 
 
 async def extract_print(

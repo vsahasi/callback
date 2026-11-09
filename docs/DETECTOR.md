@@ -492,7 +492,7 @@ By default prints live in process memory and a restart loses them all. Set
 `CALLBACK_ENROLMENT_DICT_NAME` to keep them in a `modal.Dict` across deploys
 and replicas.
 
-### Enrolment on `/v1`, and why no print lands there yet
+### Enrolment on `/v1`
 
 Two surfaces write into one store. `POST /enrol/voice` above is an operator
 tool, outside the agent contract; the ruling is explicit that it "must not
@@ -506,28 +506,65 @@ under `{user_id}:{channel}`, replacing whatever was there, because consent
 plus a verified code plus five passed prompts is a far stronger gate than the
 operator route's. `DELETE /v1/enrollments/{user_id}` erases both channels.
 
-**It cannot run yet, and not because of anything missing in it.** `/v1` is
-built around a hidden listener: the detector joins the LiveKit room, hears the
-caller, and resolves challenges from what it heard. Nothing on the wire
-carries audio, by design, so there is no field for the agent to hand over a
-clip. The listener is stretch work and is not in Round 2, so two things are
-absent:
+#### Where the audio comes from
 
-* **clips.** `detector/v1/clips.py` is the seam, and its docstring is the
-  contract for whoever writes the listener: keyed by `challenge_id`, mono
-  samples and a rate, held only until the enrollment completes.
-* **an enroll prompt that can pass.** `_outcome_for` returns `no_audio` for
-  every challenge in real mode, so nothing reaches five passes. Worth knowing
-  when that gets wired: an enroll prompt needs no transcription to pass, only
-  audio, because it records a voice rather than verifying one.
+`/v1` was designed around a hidden listener: the detector joins the LiveKit
+room, hears the caller, and resolves challenges from what it heard. In 1.1.0
+nothing on the wire carried audio at all, so an `enroll` prompt could never
+pass and a print could never be recorded. The listener is stretch work and is
+not in Round 2.
 
-Everything between a clip and a stored print is real code with tests on it
-(`tests/v1/test_enrollment_prints.py`, driven by a fake clip source). When
-the listener lands it implements `ClipSource` and is passed to `create_app`
-as `v1_clips`. Nothing else changes.
+So **contract 1.2.0 adds `Turn.audio`**, an optional `ClipRef`. The agent
+already writes call audio to its own bucket, so it points the detector at the
+span it just posted a turn for:
 
-Until then the way to get a print in front of `voice_match` is the operator
-route with a `channel`, which is what the demo does.
+```json
+{"role": "user", "text": "four seven two", "start_ms": 1000400,
+ "end_ms": 1003400,
+ "audio": {"uri": "https://your-bucket.example/turn-42.pcm",
+           "sample_rate_hz": 8000, "encoding": "pcm_s16le"}}
+```
+
+A minor bump, and the version check compares majors, so a 1.1.0 agent that
+sends no clip keeps working and simply enrols nothing. The clip is fetched
+under the same policy and the same allowlist as call audio, reduced to a
+print, and the audio is dropped.
+
+Both sources work, and the service runs with either, both or neither: a clip
+on a turn, or a `ClipSource` for the listener when it exists
+(`detector/v1/clips.py` is the seam and its docstring is the contract for
+whoever writes it).
+
+#### Only an `enroll` prompt may pass because audio arrived
+
+This is the one thing to be careful about in this area. A `digits`, `phrase`
+or `liveness` challenge asks what was said and by whom. If uploading audio
+passed one of those, anyone holding the service token could clear a step-up
+with any recording at all, which would defeat the gate the whole service is.
+An `enroll` prompt asks for neither: it records a voice. So "audio arrived
+and it is measurable" is the whole of its pass condition and none of theirs.
+
+A clip on a verification challenge is not even measured, because a print on
+that record is a print an enrollment could later read, which would be a way
+to enrol a voice with no consent. `tests/v1/test_enroll_clips.py` holds both
+halves of that and says at the top to stop if either goes red.
+
+Everything else fails closed. No clip, an unfetchable clip, a clip with
+nothing measurable in it, an agent turn rather than a user turn, a locked or
+ended session, or a deployment with audio switched off, and the prompt stays
+`no_audio`. A `no_audio` failure is not a voice fail (ruling F1), so a silent
+enrollment costs a retry, never a deny.
+
+The fetch is awaited before the turn's 204, and uses the call path's 400 ms
+timeout rather than the longer enrolment one. That budget is not about this
+request's latency: a challenge resolves 700 ms after the turn's receive time,
+and a prompt that has already been read as `failed` must never later read as
+`passed`. If the fetch outlives that window the clip is dropped and the log
+line says `v1_enroll_clip_too_late`.
+
+Until the agent writes clips, the way to get a print in front of
+`voice_match` is the operator route with a `channel`, which is what the demo
+does.
 
 ### What this does not do
 

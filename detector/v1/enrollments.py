@@ -20,18 +20,19 @@ Prints: real mode writes into PR 3's VoicePrintStore under
 listener clips only. Mock mode always enrolls and writes no print, because a
 scripted pass heard no voice.
 
-That write path is built and tested (`V1Service._store_enrollment_print`,
-`tests/v1/test_enrollment_prints.py`) and cannot run yet. Two things have to
-arrive with the listener, and both are its own work rather than something
-missing here:
+Audio reaches an enroll prompt two ways, and either is enough:
 
-* clips. Nothing on the wire carries audio, by design: there is no AudioRef
-  in callback_shared and a challenge is polled rather than answered with a
-  body. `detector/v1/clips.py` is the seam and says what to implement.
-* an enroll prompt that can pass. `_outcome_for` returns `no_audio` for every
-  challenge in real mode, so no prompt passes and no enrollment reaches the
-  five it needs. Worth knowing: an enroll prompt needs no transcription to
-  pass, only audio, because it records a voice rather than verifying one.
+* `Turn.audio`, contract 1.2.0. The agent points the detector at the span it
+  just posted a turn for, and `V1Service._measure_enroll_clip` fetches it
+  under the call path's audio policy and reduces it to a print. This is the
+  one that works today.
+* a `ClipSource`, the hidden listener, which hears the room and needs no
+  upload. Stretch work, None everywhere; `detector/v1/clips.py` is the seam.
+
+An `enroll` prompt passes when audio arrived and was measurable, and that is
+the whole condition, because it records a voice rather than verifying one. No
+other kind of challenge may pass that way: see the warning on
+`_measure_enroll_clip`, which is the security argument for this whole area.
 """
 
 from __future__ import annotations

@@ -459,7 +459,8 @@ def test_every_path_without_a_print_says_why() -> None:
             return np.zeros(3 * RATE), RATE
 
     cases = {
-        "no_listener": {"clips": None},
+        # Neither a listener nor an audio policy: nothing could have arrived.
+        "no_audio_source": {"clips": None},
         "no_clips_for_passed_prompts": {"clips": NoClips()},
         "combined_print_not_comparable": {"clips": Silence()},
         "store_refused": {"clips": Clips(), "store": Full()},

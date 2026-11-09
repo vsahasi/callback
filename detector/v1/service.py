@@ -19,6 +19,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from callback_shared.contract import (
     ACTION_TIER,
     AUTHORIZE_SERVER_DEADLINE_S,
@@ -51,12 +52,14 @@ from callback_shared.contract import (
 
 from detector.analysis.dsp import build_context
 from detector.analysis.voiceprint import VoicePrint, combine_prints, voiceprint_from
+from detector.audio import AudioPolicy
 from detector.config import Settings
-from detector.enrolment import VoicePrintStore, storable_enrolment
+from detector.enrolment import VoicePrintStore, print_from_clip, storable_enrolment
 from detector.errors import DetectorError
 from detector.mock import jitter_seconds
 from detector.observability import StructuredLogger
 from detector.v1.challenges import (
+    ENROLL_HEARD,
     MAX_CHALLENGES_PER_SESSION,
     VERIFICATION_KINDS,
     ChallengeRecord,
@@ -159,14 +162,27 @@ class V1Service:
         directory: UserDirectory | None = None,
         otp: OtpBackend | None = None,
         clips: ClipSource | None = None,
+        audio_policy: AudioPolicy | None = None,
+        client_of: Callable[[], httpx.AsyncClient] | None = None,
     ) -> None:
         self.settings = settings
         self.clock: Callable[[], float] = clock or time.time
         self.voiceprints = voiceprints
-        # Where enrollment audio comes from. None in Round 2: the hidden
-        # listener is stretch work, so nothing is heard and no print is
-        # written. See detector/v1/clips.py.
+        # Two ways enrollment audio can arrive, and the service works with
+        # either, both, or neither.
+        #
+        # `audio_policy` plus `client_of` read a clip the agent uploaded with
+        # a turn, which is contract 1.2.0's ClipRef. The policy is the same one
+        # the call path uses, including its 400 ms timeout: that budget is not
+        # about this request's latency but about settling the prompt inside
+        # the 700 ms a challenge waits before it resolves.
+        #
+        # `clips` is the hidden listener, which hears the room and needs no
+        # upload. It is stretch work and None everywhere today. See
+        # detector/v1/clips.py.
         self.clips = clips
+        self.audio_policy = audio_policy
+        self.client_of = client_of
         self.directory = (
             directory
             if directory is not None
@@ -277,7 +293,7 @@ class V1Service:
             channel=req.channel.value,
         )
 
-    def add_turn(self, session_id: str, turn: Turn) -> None:
+    async def add_turn(self, session_id: str, turn: Turn) -> None:
         session = self.registry.get(session_id)
         key = turn_key(turn)
         if key in session.turns:
@@ -288,16 +304,116 @@ class V1Service:
         )
         while len(session.turns) > MAX_TURNS:
             session.turns.popitem(last=False)
-        if turn.role is Role.USER:
-            self._on_user_turn(session, received_at)
+        if turn.role is not Role.USER:
+            return
+        answered = self._on_user_turn(session, received_at)
+        if answered is not None:
+            # Awaited rather than left to run loose, so the clip is measured
+            # before this request answers 204. A challenge resolves 700 ms
+            # after the turn's receive time and the agent polls after posting,
+            # so settling it here is what keeps a prompt from reading `failed`
+            # and then later reading `passed`.
+            await self._measure_enroll_clip(session, answered, turn)
 
-    def _on_user_turn(self, session: V1Session, received_at: float) -> None:
+    def _on_user_turn(
+        self, session: V1Session, received_at: float
+    ) -> ChallengeRecord | None:
+        """Bind this turn to the open challenge, and return it."""
+
         # Only the current challenge can be pending: a new one supersedes it.
         if session.current_challenge_id is None:
-            return
+            return None
         current = session.challenges.get(session.current_challenge_id)
-        if current is not None:
-            current.note_user_turn(received_at)
+        if current is None:
+            return None
+        current.note_user_turn(received_at)
+        return current
+
+    async def _measure_enroll_clip(
+        self, session: V1Session, challenge: ChallengeRecord, turn: Turn
+    ) -> None:
+        """Measure the caller's clip for an open enroll prompt, and pass it.
+
+        ENROLL ONLY, and that restriction is the whole security argument. A
+        `digits`, `phrase` or `liveness` challenge asks what was said and by
+        whom; passing one because audio merely arrived would let anyone
+        holding the service token clear a step-up by uploading any recording
+        at all. An `enroll` prompt asks for neither: it records a voice, as
+        `detector/v1/challenges.py` says, so "audio arrived and it is
+        measurable" is the whole of its pass condition.
+
+        Everything else here fails closed. No clip, an unfetchable clip, a
+        clip with nothing measurable in it, a locked or ended session, or a
+        deployment with audio switched off, and the prompt stays `no_audio`.
+        A `no_audio` failure is not a voice fail (ruling F1), so a silent
+        enrollment costs a retry and never a deny.
+        """
+
+        if self.mock_mode:
+            return  # scripted outcomes, and mock mode writes no print
+        if challenge.kind is not ChallengeKind.ENROLL:
+            return
+        if challenge.voice is not None:
+            return  # measured already; a retry issues a new challenge
+        if session.locked_code is not None or session.ended:
+            return  # a denied or finished caller's voice is never recorded
+        clip = turn.audio
+        if clip is None or not clip.uri:
+            return
+        if self.audio_policy is None or not self.audio_policy.enabled:
+            return
+
+        try:
+            voice, source = await print_from_clip(
+                clip.uri,
+                sample_rate_hz=clip.sample_rate_hz,
+                encoding=clip.encoding,
+                policy=self.audio_policy,
+                start_ms=turn.start_ms,
+                end_ms=turn.end_ms,
+                client=self.client_of() if self.client_of is not None else None,
+            )
+        except Exception as exc:  # noqa: BLE001 - a live call outlives a bad clip
+            self.log(
+                "v1_enroll_clip_unavailable",
+                level="warning",
+                session_id=session.session_id,
+                challenge_id=challenge.challenge_id,
+                error=type(exc).__name__,
+            )
+            return
+
+        if not voice.comparable:
+            self.log(
+                "v1_enroll_clip_not_comparable",
+                level="warning",
+                session_id=session.session_id,
+                challenge_id=challenge.challenge_id,
+            )
+            return
+
+        if challenge.resolve(self.registry.now()).status is not ChallengeState.PENDING:
+            # The fetch outlived the 700 ms resolve delay and the agent may
+            # already have read this prompt as failed. An answer that has been
+            # given is never taken back, so the clip is dropped.
+            self.log(
+                "v1_enroll_clip_too_late",
+                level="warning",
+                session_id=session.session_id,
+                challenge_id=challenge.challenge_id,
+            )
+            return
+
+        challenge.voice = voice
+        challenge.outcome = ENROLL_HEARD
+        self.log(
+            "v1_enroll_clip_measured",
+            session_id=session.session_id,
+            challenge_id=challenge.challenge_id,
+            prompt=challenge.enroll_prompt,
+            source=source,
+            voiced_seconds=round(voice.voiced_seconds, 2),
+        )
 
     def add_event(self, session_id: str, event: SpeechEvent) -> None:
         session = self.registry.get(session_id)
@@ -779,14 +895,6 @@ class V1Service:
                 reason=reason,
             )
 
-        if self.clips is None:
-            # Round 2. No listener, so nothing was heard. Not a warning:
-            # it is the documented state of this deployment, and in real
-            # mode no prompt can pass anyway, so this is unreachable until
-            # the listener exists.
-            give_up("no_listener", level="info")
-            return
-
         now = self.registry.now()
         prints: list[VoicePrint] = []
         for challenge in session.challenges.values():
@@ -794,6 +902,14 @@ class V1Service:
             if prompt is None or prompt not in record.passed_prompts:
                 continue
             if challenge.resolve(now).status is not ChallengeState.PASSED:
+                continue
+            if challenge.voice is not None:
+                # Measured when the turn arrived, from the clip the agent
+                # uploaded with it. Already a print, so there is nothing to
+                # fetch and no audio held anywhere.
+                prints.append(challenge.voice)
+                continue
+            if self.clips is None:
                 continue
             clip = self.clips.clip_for(challenge.challenge_id)
             if clip is None:
@@ -811,7 +927,13 @@ class V1Service:
                 )
 
         if not prints:
-            give_up("no_clips_for_passed_prompts")
+            if self.clips is None and self.audio_policy is None:
+                # Neither way audio could arrive is configured. Not a warning:
+                # it is the documented state of a deployment with no listener
+                # and no audio policy, where no prompt can pass either.
+                give_up("no_audio_source", level="info")
+            else:
+                give_up("no_clips_for_passed_prompts")
             return
 
         try:

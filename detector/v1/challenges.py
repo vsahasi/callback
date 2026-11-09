@@ -21,7 +21,14 @@ from dataclasses import dataclass
 
 from callback_shared.contract import ChallengeKind, ChallengeState, ChallengeStatus
 
+from detector.analysis.voiceprint import VoicePrint
 from detector.v1.scenarios import ChallengeOutcome
+
+# What an `enroll` prompt answered with usable audio resolves to. No
+# phrase_match and no speaker_score, because an enroll prompt verifies
+# nothing: it records a voice. The policy layer reads those two fields to
+# count voice failures, and an enrollment must not feed that count.
+ENROLL_HEARD = ChallengeOutcome(ChallengeState.PASSED, None, None, None)
 
 CHALLENGE_TTL_S = 45.0
 # A whole enrollment takes at most 21 (7 prompts, 3 tries each), and a call a
@@ -150,6 +157,10 @@ class ChallengeRecord:
     consumed: bool = False
     # Enrollment bookkeeping: the try has been counted.
     settled: bool = False
+    # The voice measured from this prompt's clip, for an enroll challenge the
+    # caller answered with audio. A print, never the audio: the clip is read
+    # once, reduced, and dropped. Only ever set for ChallengeKind.ENROLL.
+    voice: VoicePrint | None = None
 
     @property
     def expires_at(self) -> float:
