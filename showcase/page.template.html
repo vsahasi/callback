@@ -1,0 +1,375 @@
+<title>Four Seconds Of A Phone Call</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Newsreader:opsz,wght@6..72,400;6..72,500&family=Spline+Sans+Mono:wght@400;600&display=swap">
+
+<style>
+/* A sheet off an audio forensics bench. The trace runs the width of the page
+   and everything else annotates it: the finding beneath, the reading under
+   that. Committed to paper, one ink, one red pen. */
+:root{
+  --paper:#e9e7e1;
+  --sheet:#f6f5f1;
+  --ink:#191714;
+  --ink-2:#6a665e;
+  --rule:#cbc7bd;
+  --red:#a8322a;
+  --green:#3d6b45;
+  --display:'Bricolage Grotesque',system-ui,sans-serif;
+  --text:'Newsreader',Georgia,serif;
+  --mono:'Spline Sans Mono',ui-monospace,monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--text);
+  font-size:17px;
+  line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:0 60px;
+}
+.sheet{
+  max-width:900px;margin:0 auto;background:var(--sheet);
+  border-left:1px solid var(--rule);border-right:1px solid var(--rule);
+  padding-left:clamp(18px,4vw,44px);padding-right:clamp(18px,4vw,44px);
+  padding-block:0 40px;
+}
+h1,h2{font-family:var(--display);margin:0;text-wrap:balance}
+
+.top{padding-block:34px 18px;display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--ink)}
+h1{font-size:clamp(27px,4.6vw,40px);font-weight:700;line-height:1.06;letter-spacing:-.015em;max-width:15ch}
+.premise{font-size:16px;color:var(--ink-2);max-width:38ch;margin:0}
+.premise b{color:var(--ink);font-weight:500}
+
+.inputs{display:flex;flex-wrap:wrap;border-bottom:1px solid var(--rule);margin-top:26px}
+.input{
+  flex:1 1 170px;min-width:0;text-align:left;cursor:pointer;
+  background:none;border:0;border-bottom:3px solid transparent;
+  padding:12px 14px 11px;font-family:var(--text);color:var(--ink-2);
+  font-size:15px;line-height:1.25;transition:color .15s,border-color .15s;
+}
+.input b{display:block;font-family:var(--display);font-weight:500;font-size:16px;color:var(--ink-2);transition:color .15s}
+.input:hover,.input:hover b{color:var(--ink)}
+.input[aria-pressed="true"]{border-bottom-color:var(--red);color:var(--ink)}
+.input[aria-pressed="true"] b{color:var(--ink);font-weight:700}
+.input:focus-visible{outline:2px solid var(--red);outline-offset:-2px}
+
+figure{margin:0;padding-block:22px 0}
+.trace-wrap{position:relative}
+canvas{display:block;width:100%;height:170px;max-width:100%}
+.gapline{position:absolute;left:0;right:0;height:1px;background:var(--red);opacity:.5}
+figcaption{display:flex;flex-wrap:wrap;gap:10px 20px;justify-content:space-between;align-items:baseline;
+  padding-top:9px;border-top:1px solid var(--rule);margin-top:9px;font-family:var(--mono);font-size:11.5px;color:var(--ink-2)}
+.play{font-family:var(--mono);font-size:11.5px;color:var(--ink);background:none;border:0;border-bottom:1px solid var(--ink);padding:0 0 1px;cursor:pointer}
+.play:hover{color:var(--red);border-color:var(--red)}
+.play:focus-visible{outline:2px solid var(--red);outline-offset:3px}
+
+.finding{padding-block:26px 0}
+.verdict-word{font-family:var(--display);font-weight:700;font-size:clamp(34px,7vw,62px);line-height:.95;letter-spacing:-.025em}
+.verdict-word.allow{color:var(--green)}
+.verdict-word.challenge{color:var(--ink)}
+.verdict-word.deny{color:var(--red)}
+.verdict-line{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:baseline;margin-top:6px}
+.risk{font-family:var(--mono);font-size:14px;color:var(--ink-2)}
+.risk b{color:var(--ink);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.because{margin:14px 0 0;max-width:60ch;font-size:17.5px;line-height:1.5}
+.action{margin-top:8px;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+
+.ruler{margin-top:24px;max-width:640px}
+.ruler-track{position:relative;height:22px;border-bottom:1px solid var(--ink)}
+.band{position:absolute;bottom:0;top:12px}
+.band.b1{left:0;width:30%;border-right:1px solid var(--ink-2)}
+.band.b2{left:30%;width:25%;border-right:1px solid var(--ink-2)}
+.needle{position:absolute;bottom:0;top:0;width:2px;background:var(--red);transition:left .35s cubic-bezier(.33,1,.68,1)}
+.needle span{position:absolute;top:-3px;left:6px;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--red);white-space:nowrap;font-variant-numeric:tabular-nums}
+.ruler-marks{position:relative;height:16px;font-family:var(--mono);font-size:10.5px;color:var(--ink-2);margin-top:4px}
+.ruler-marks i{position:absolute;font-style:normal;white-space:nowrap}
+.m0{left:0}.m30{left:30%;transform:translateX(-50%)}.m55{left:55%;transform:translateX(-50%)}.m100{right:0}
+
+.note{margin-top:26px;border-left:3px solid var(--red);padding:2px 0 2px 16px;font-size:16.5px;line-height:1.45;max-width:58ch}
+.note b{font-weight:500;color:var(--red)}
+.note.quiet{border-left-color:var(--rule);color:var(--ink-2)}
+
+.ref{margin-top:30px;padding-top:18px;border-top:1px solid var(--rule);display:flex;flex-wrap:wrap;gap:16px;align-items:baseline;justify-content:space-between}
+.ref p{margin:0;max-width:46ch;font-size:15.5px;color:var(--ink-2)}
+.ref p b{color:var(--ink);font-weight:500}
+.refctl{font-family:var(--mono);font-size:12.5px;display:flex;gap:14px;align-items:baseline;flex:0 0 auto;color:var(--ink-2)}
+.refctl button{font-family:var(--mono);font-size:12.5px;background:none;border:0;cursor:pointer;color:var(--ink-2);padding:2px 0;border-bottom:2px solid transparent}
+.refctl button[aria-pressed="true"]{color:var(--ink);border-bottom-color:var(--red)}
+.refctl button:hover{color:var(--ink)}
+.refctl button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+.reading{margin-top:34px;border-top:1px solid var(--ink);padding-top:4px}
+.row{display:grid;grid-template-columns:1fr auto;gap:4px 18px;padding-block:14px;border-bottom:1px solid var(--rule)}
+.row:last-child{border-bottom:0}
+.row h2{font-family:var(--display);font-weight:500;font-size:17px;line-height:1.2;min-width:0}
+.val{font-family:var(--mono);font-size:19px;font-weight:600;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.val.pass{color:var(--green)}
+.val.fail{color:var(--red)}
+.val.inconclusive{color:var(--ink)}
+.val.not_run{color:var(--ink-2);font-size:13px;font-weight:400}
+.val small{display:block;font-size:10.5px;font-weight:400;color:var(--ink-2)}
+.says{grid-column:1 / -1;color:var(--ink-2);font-size:15.5px;line-height:1.45;max-width:72ch;margin:0}
+
+.closing{margin-top:44px;border-top:1px solid var(--ink);padding-top:22px;max-width:62ch}
+.closing h2{font-family:var(--display);font-size:18px;font-weight:700;margin:22px 0 6px}
+.closing h2:first-of-type{margin-top:4px}
+.closing p{margin:0 0 13px;font-size:16px;color:var(--ink-2)}
+.closing p b{color:var(--ink);font-weight:500}
+.colophon{margin-top:30px;padding-top:14px;border-top:1px solid var(--rule);font-family:var(--mono);font-size:11.5px;color:var(--ink-2);line-height:1.7}
+
+@media (max-width:560px){
+  .input{flex:1 1 100%;border-bottom:1px solid var(--rule);padding:10px 0}
+  .input[aria-pressed="true"]{border-bottom-color:var(--red)}
+  canvas{height:132px}
+  .top{align-items:flex-start}
+}
+@media (prefers-reduced-motion: reduce){*{transition:none!important}}
+</style>
+
+<div class="sheet">
+
+<div class="top">
+  <h1>Four seconds of a phone call.</h1>
+  <p class="premise">A vendor emailed new bank details. The payment is held and we ring the number on the <b>oldest invoice</b>, not the one in the email. This is what the line sounded like, and what the detector made of it.</p>
+</div>
+
+<div class="inputs" id="inputs" role="group" aria-label="Who is on the line"></div>
+
+<figure>
+  <div class="trace-wrap" id="traceWrap">
+    <canvas id="trace" width="1800" height="340" aria-label="Waveform of the caller audio"></canvas>
+    <div class="gapline" id="gapline" hidden></div>
+  </div>
+  <figcaption>
+    <span id="capLeft"></span>
+    <span id="capLevel" style="color:var(--red)"></span>
+    <button type="button" class="play" id="play">play 4 seconds</button>
+  </figcaption>
+</figure>
+
+<div class="finding">
+  <div class="verdict-word deny" id="verdictWord">deny</div>
+  <div class="verdict-line">
+    <span class="risk">blended risk <b id="riskNum">0.17</b></span>
+    <span class="risk">confidence <b id="confNum">0.85</b></span>
+  </div>
+  <p class="because" id="because"></p>
+  <div class="action" id="action"></div>
+
+  <div class="ruler">
+    <div class="ruler-track">
+      <div class="band b1"></div><div class="band b2"></div>
+      <div class="needle" id="needle" style="left:17%"><span id="needleVal">0.17</span></div>
+    </div>
+    <div class="ruler-marks">
+      <i class="m0">0.00</i><i class="m30">0.30 allow below</i><i class="m55">0.55 deny above</i><i class="m100">1.00</i>
+    </div>
+  </div>
+</div>
+
+<div class="note" id="note" hidden></div>
+
+<div class="ref">
+  <p id="refCopy"></p>
+  <div class="refctl" role="group" aria-label="Reference voice">
+    <span>reference voice</span>
+    <button type="button" id="refOn" aria-pressed="true">on file</button>
+    <button type="button" id="refOff" aria-pressed="false">none</button>
+  </div>
+</div>
+
+<div class="reading" id="reading"></div>
+
+<div class="closing">
+  <h2>Where these numbers come from</h2>
+  <p>I generated this page by driving the detector over its own HTTP interface in real mode, four callers against two states of the voice record, and writing down what came back. The sentences under each signal are the detector's, not mine. If a threshold moves, the page moves with it.</p>
+
+  <h2>Why a clone is only challenged</h2>
+  <p>A clone of the vendor is <b>supposed</b> to match on voice. That signal answers its own question correctly and carries the heaviest weight, so the two signals that did catch it end up a smaller share of the total. What stops a clone is the code texted to the number on the invoice, not the blended score.</p>
+
+  <h2>Why a recording is denied at 0.17</h2>
+  <p>That is below the line where a caller passes, and it is denied anyway. Three rules hold at once: the replay score sits just above the threshold that would make it fatal on its own, a failing signal can never become an allow, and replay is one of two signals a correct code cannot talk its way past. Take away any one and a recording gets through.</p>
+
+  <h2>What it cannot do</h2>
+  <p>This is not speaker verification. It compares pitch register and long-term spectral shape, which catches an obviously different talker and nothing finer. Two people with similar voices match here even when you could tell them apart instantly.</p>
+  <p>There is <b>no trained model in the serving path</b>. It is classical signal processing, and the thresholds are calibrated against synthetic audio generated in the same repository rather than a corpus of real attacks. Against a current commercial voice clone the synthesis detector would very likely do worse than it does here. The replay detector rests on room acoustics, which is physics, and should travel better.</p>
+
+  <div class="colophon">
+    Callback, built with Veer Sahasi for the BBS x Ramp hackathon.<br>
+    Detector, enrolment and scoring mine. Agent and dashboard his.<br>
+    Classical DSP, numpy only. 3,463 tests across three suites.
+  </div>
+</div>
+</div>
+
+<audio id="player" preload="none"></audio>
+
+<script id="payload" type="application/json">__DATA__</script>
+<script>
+(function(){
+  var DATA = JSON.parse(document.getElementById('payload').textContent);
+  var state = { key:'replay', ref:true };
+  var NAMES = {
+    voice_match:'Is it the right voice',
+    synthetic_speech:'Was it synthesised',
+    replay:'Is it a recording',
+    agent_behaviour:'Is a bot driving the call',
+    liveness:'Is anyone breathing'
+  };
+  var LOOK = {
+    live:'speech in bursts, the gaps dropping back to the noise floor between words',
+    replay:'the gaps never fall all the way back: a room ringing on after each word',
+    clone:'bursts of near-identical length, spaced like a metronome',
+    impostor:'the same shape as a live caller, because it is one'
+  };
+
+  function byKey(k){ for (var i=0;i<DATA.attacks.length;i++) if (DATA.attacks[i].key===k) return DATA.attacks[i]; return DATA.attacks[0]; }
+  function cur(){ return byKey(state.key)[state.ref ? 'enrolled' : 'bare']; }
+
+  var cache = {};
+  function samples(a){
+    if (cache[a.key]) return cache[a.key];
+    var bin = atob(a.audio), n = bin.length, bytes = new Uint8Array(n), i;
+    for (i=0;i<n;i++) bytes[i] = bin.charCodeAt(i);
+    var view = new DataView(bytes.buffer), off = 12, len = 0, start = 0;
+    while (off < bytes.length - 8){
+      var id = String.fromCharCode(bytes[off],bytes[off+1],bytes[off+2],bytes[off+3]);
+      var size = view.getUint32(off+4, true);
+      if (id === 'data'){ start = off + 8; len = size; break; }
+      off += 8 + size + (size % 2);
+    }
+    var count = Math.floor(len/2), out = new Float32Array(count);
+    for (var j=0;j<count;j++) out[j] = view.getInt16(start + j*2, true) / 32768;
+    cache[a.key] = out;
+    return out;
+  }
+
+  var canvas = document.getElementById('trace');
+  function draw(){
+    var a = byKey(state.key), data = samples(a);
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = canvas.clientWidth, h = canvas.clientHeight, k;
+    if (!w || !h) return;
+    canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.clearRect(0,0,w,h);
+
+    var mid = h/2, step = data.length/w, peak = 0;
+    for (k=0;k<data.length;k++){ var v = Math.abs(data[k]); if (v > peak) peak = v; }
+    var gain = peak > 0 ? (h/2 - 8)/peak : 1;
+
+    ctx.fillStyle = '#191714';
+    for (var x=0;x<w;x++){
+      var s = Math.floor(x*step), e = Math.min(Math.floor((x+1)*step), data.length);
+      var lo = 0, hi = 0;
+      for (var p=s;p<e;p++){ var q = data[p]; if (q < lo) lo = q; if (q > hi) hi = q; }
+      ctx.fillRect(x, mid - hi*gain, 1, Math.max(1, (hi-lo)*gain));
+    }
+
+    var picked = [], hop = Math.max(1, Math.floor(data.length/4000));
+    for (k=0;k<data.length;k+=hop) picked.push(Math.abs(data[k]));
+    picked.sort(function(p,q){ return p-q; });
+    var floor = picked[Math.floor(picked.length*0.25)] || 0;
+    var gl = document.getElementById('gapline');
+    var offset = Math.min(h/2 - 2, floor*gain);
+    gl.hidden = false;
+    gl.style.top = (mid + offset) + 'px';
+    document.getElementById('capLevel').textContent = 'red line: the quietest quarter of this clip sits at ' + (20*Math.log10(Math.max(floor,1e-6))).toFixed(0) + ' dBFS';
+    document.getElementById('capLeft').textContent = LOOK[a.key] || '';
+  }
+
+  var holder = document.getElementById('inputs');
+  DATA.attacks.forEach(function(a){
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'input';
+    b.setAttribute('aria-pressed', String(a.key === state.key));
+    b.dataset.key = a.key;
+    var strong = document.createElement('b'); strong.textContent = a.label;
+    var span = document.createElement('span'); span.textContent = a.blurb;
+    b.appendChild(strong); b.appendChild(span);
+    b.addEventListener('click', function(){ state.key = a.key; render(); });
+    holder.appendChild(b);
+  });
+
+  var player = document.getElementById('player');
+  document.getElementById('play').addEventListener('click', function(){
+    var a = byKey(state.key);
+    player.src = 'data:audio/wav;base64,' + a.audio;
+    player.currentTime = 0;
+    var p = player.play(); if (p && p.catch) p.catch(function(){});
+  });
+
+  document.getElementById('refOn').addEventListener('click', function(){ state.ref = true; render(); });
+  document.getElementById('refOff').addEventListener('click', function(){ state.ref = false; render(); });
+
+  function render(){
+    var a = byKey(state.key), r = cur();
+
+    Array.prototype.forEach.call(holder.children, function(el){
+      el.setAttribute('aria-pressed', String(el.dataset.key === state.key));
+    });
+    document.getElementById('refOn').setAttribute('aria-pressed', String(state.ref));
+    document.getElementById('refOff').setAttribute('aria-pressed', String(!state.ref));
+    document.getElementById('refCopy').innerHTML = state.ref
+      ? 'Six seconds from a call we already trusted, kept as a pitch and a spectral envelope. <b>Never the recording.</b>'
+      : 'Nothing on file for this vendor, so the voice comparison cannot run and <b>its 0.35 of the weight goes to the other four</b>.';
+
+    var word = document.getElementById('verdictWord');
+    word.className = 'verdict-word ' + r.decision;
+    word.textContent = r.decision;
+    document.getElementById('riskNum').textContent = r.risk.toFixed(2);
+    document.getElementById('confNum').textContent = r.confidence.toFixed(2);
+    document.getElementById('because').textContent = r.reason || '';
+    document.getElementById('action').textContent = 'the agent is told to ' + (r.next_action || '').replace(/_/g,' ');
+
+    document.getElementById('needle').style.left = (r.risk*100) + '%';
+    document.getElementById('needleVal').textContent = r.risk.toFixed(2);
+
+    var reading = document.getElementById('reading');
+    reading.innerHTML = '';
+    r.factors.forEach(function(f){
+      var ran = f.verdict !== 'not_run';
+      var row = document.createElement('div'); row.className = 'row';
+      var h = document.createElement('h2'); h.textContent = NAMES[f.name] || f.name;
+      var val = document.createElement('div'); val.className = 'val ' + f.verdict;
+      if (ran){
+        val.textContent = f.score.toFixed(2);
+        var sm = document.createElement('small');
+        sm.textContent = f.verdict + ', weight ' + f.weight.toFixed(2);
+        val.appendChild(sm);
+      } else {
+        val.textContent = 'not measured';
+      }
+      var says = document.createElement('p'); says.className = 'says';
+      says.textContent = f.detail || '';
+      row.appendChild(h); row.appendChild(val); row.appendChild(says);
+      reading.appendChild(row);
+    });
+
+    var note = document.getElementById('note'), bare = a.bare, enr = a.enrolled;
+    if (!state.ref && bare.decision === 'allow' && enr.decision !== 'allow'){
+      note.hidden = false; note.className = 'note';
+      note.innerHTML = 'With nothing on file, a different person reading the attacker\u2019s script is <b>allowed at ' +
+        bare.risk.toFixed(2) + '</b>. Synthesis, replay and liveness all pass a live human at a handset, because a live human at a handset is exactly what they are looking for. The voice comparison is the only one that would notice, and it has nothing to compare against.';
+    } else if (bare.decision !== enr.decision){
+      note.hidden = false; note.className = 'note quiet';
+      note.textContent = 'Putting a voice on file changes this one: ' + bare.decision + ' at ' + bare.risk.toFixed(2) +
+        ' without it, ' + enr.decision + ' at ' + enr.risk.toFixed(2) + ' with it.';
+    } else {
+      note.hidden = true; note.textContent = '';
+    }
+
+    draw();
+  }
+
+  var t;
+  window.addEventListener('resize', function(){ clearTimeout(t); t = setTimeout(draw, 120); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+  render();
+})();
+</script>

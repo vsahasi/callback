@@ -47,3 +47,6 @@ wandb/
 
 # Local working notes
 PLAN.md
+
+# Built by showcase/build.py in seconds; a few hundred KB of base64 audio.
+showcase/dist/
