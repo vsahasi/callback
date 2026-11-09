@@ -1,181 +1,322 @@
-# Callback
+<div align="center">
 
-Callback is a voice agent for Ramp. You phone it, or talk to it in the browser. It reads a company's Ramp account (vendors, bills, the last four digits of a bank account) and acts on it (hold a vendor, release a hold, change a vendor's bank account). Before any sensitive action, it checks that the caller is the real person, not a scammer or an AI-cloned voice.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
+  <img alt="Callback. Two waveforms of the same voice: a live caller, whose signal falls to the noise floor between words, and the same voice played back down a phone line, where it does not because the room is still ringing." src="docs/assets/hero-light.svg" width="100%">
+</picture>
 
-Voice biometrics alone are broken, because a cloned voice passes them. In one 2026 study, cloned voices got past a tuned speaker-verification system 43 to 83 percent of the time, depending on the cloning tool ([arXiv 2601.02914](https://arxiv.org/html/2601.02914)). So we check that the voice matches the enrolled person and that it comes from a real human. We also add an SMS code and a callback, both to the number on file, because a clone can't fake those.
+[![tests](https://img.shields.io/badge/tests-3%2C463%20passing-a8322a?style=flat-square&labelColor=191714)](#running-it)
+[![python](https://img.shields.io/badge/python-3.11%20%2B%203.13-a8322a?style=flat-square&labelColor=191714)](#running-it)
+[![contract](https://img.shields.io/badge/contract-callback__shared%201.2.0-a8322a?style=flat-square&labelColor=191714)](shared/src/callback_shared/contract.py)
+[![detector](https://img.shields.io/badge/detector-classical%20DSP%2C%20no%20model-a8322a?style=flat-square&labelColor=191714)](docs/DETECTOR.md)
+[![audio](https://img.shields.io/badge/audio-never%20stored-a8322a?style=flat-square&labelColor=191714)](#privacy)
+[![built for](https://img.shields.io/badge/built%20for-BBS%20x%20Ramp-191714?style=flat-square&labelColor=191714)](#team)
 
-Callback runs against Ramp's sandbox, which can't move real money.
+### A voice agent that phones a vendor back to find out whether the person asking to move money is really them.
+
+[What it does](#why-this-matters) &middot; [How a call works](#how-a-call-works) &middot; [Inside the detector](#inside-the-detector) &middot; [What it measures](#what-it-actually-measures) &middot; [Run it](#running-it) &middot; [Limits](#limits)
+
+</div>
+
+---
+
+A vendor emails finance with new bank details. Somebody has to decide whether that email is real before the next invoice pays out to it. Callback holds the payment in Ramp, finds the vendor's phone number on the oldest invoice already on file, and rings **that** number rather than anything in the email. The vendor says the new account out loud, Callback never reads it back to them, and five signals measure the voice while they talk. A person approves in Ramp before any money moves.
+
+> **Status: hackathon build, end to end against Ramp's sandbox, which cannot move real money.** The agent places and runs real calls over LiveKit, the detector measures real audio and answers inside a 3 second budget, voiceprints enrol and compare, and the bank-detail check never reveals the expected digits. 3,463 tests across three suites. The honest ceiling: there is no trained model in the serving path, and the detector's thresholds are calibrated against synthetic audio rather than a corpus of real attacks, so the synthesis detector is the part most likely to underperform against a current commercial clone.
+
+## Why this matters
+
+Voice biometrics alone are broken. In one 2026 study, cloned voices got past a tuned speaker-verification system **43 to 83 percent of the time** depending on the cloning tool ([arXiv 2601.02914](https://arxiv.org/html/2601.02914)). Any system whose answer to "is this really them" is a single voiceprint score is already beaten.
+
+So Callback does not ask one question. It asks five, of a call it placed itself:
+
+- **Is it the right voice?** Compared against a reference enrolled from a call that was already trusted.
+- **Was it synthesised?** Vocoder phase, pitch micro-variation, the regularity of the speech and pause rhythm.
+- **Is it a recording?** The spectral comb of a loudspeaker, and the reverberant tail of the room it was played into.
+- **Is a bot driving the call?** Turn-taking latency that no human produces.
+- **Is anyone breathing?** Breath events, pause irregularity, pitch wander.
+
+Then it adds two things a clone cannot fake: a code texted to the number already on file, and a callback to that same number. **We never use a number the caller gives us.**
 
 ## How a call works
 
-Callback has two halves. The agent (Veer) runs the call and talks to Ramp. The detection service (Eric) listens to the caller and decides whether the agent may go ahead. The agent owns the conversation. The detector owns the judgment about who is on the line.
+The call below is the one that matters: a caller who sounds right, asking to change where the money goes, who turns out to be playing a recording.
 
-1. A caller, say the company's CFO, joins a LiveKit room by phone or from the browser. The agent opens with a recording disclosure and asks who they are.
-2. For the rest of the call, the detection service scores the caller's voice.
-3. When the caller asks for something sensitive, the agent's tool for it goes through the gate. The gate asks the detection service for a decision.
-4. The service can ask for more proof first: a spoken challenge phrase, an SMS code read back, or a callback to the number on file. The agent runs those and asks again.
-5. The agent makes the Ramp call only when the service allows it. When the service denies a money move, the agent puts the vendor on hold first. Then it tells the caller we will follow up through the usual channel, and ends the call.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Caller
+    participant Agent as Voice agent
+    participant Gate as The gate
+    participant Det as Detector /v1
+    participant Ramp
 
-What each request needs, roughly:
+    rect rgba(61,107,69,0.10)
+        note over Caller,Ramp: Identify. Nothing is authorised yet.
+        Caller->>Agent: dials the number on the invoice
+        Agent->>Agent: speaks the recording disclosure
+        Agent->>Det: POST /v1/sessions
+        Agent->>Det: POST /v1/sessions/{id}/caller
+    end
 
-- Holding a vendor or a bill needs nothing. A hold is always allowed.
-- Reading vendors, bills or the last four digits of a bank account needs the voice checks to pass.
-- Changing a vendor's bank account or releasing a hold needs all of it: the voice checks, the SMS code and a callback to the number on file. The callback needs a phone line, so these two need a phone call. From the browser the agent refuses them and tells the caller to call in by phone. Holds and reads work on both channels.
+    rect rgba(25,23,20,0.06)
+        note over Caller,Ramp: Listen. Every finished turn is forwarded.
+        Caller->>Agent: "I need to update our bank details"
+        Agent->>Det: POST /v1/sessions/{id}/turns
+        Det-->>Agent: RiskUpdate on the risk topic, about every 2 s
+    end
 
-## What the detector checks
+    rect rgba(168,50,42,0.12)
+        note over Caller,Ramp: Authorise. Tier 2, a money move.
+        Agent->>Gate: the model asks for update_vendor_bank_account
+        Gate->>Det: POST /v1/sessions/{id}/authorize
+        Det->>Det: five signals blend to 0.17
+        Det->>Det: replay failed, and a code cannot rescue a replay
+        Det-->>Gate: deny
+    end
 
-The detector answers one narrow question: is the voice on the line really the enrolled person, or is it a clone, a recording, an automated caller or a different person? It measures five signals (voice match, synthetic speech, replay, automated-caller behaviour and liveness) and combines them, with the result of the SMS code, into a risk score and a decision.
+    rect rgba(168,50,42,0.12)
+        note over Caller,Ramp: Refuse, and protect the vendor anyway.
+        Gate->>Ramp: hold the vendor
+        Gate-->>Agent: refuse the request
+        Agent->>Caller: declines, ends the call
+        Agent->>Det: POST /v1/sessions/{id}/end
+    end
+```
 
-It runs in two modes:
+Had the detector answered `step_up` instead, the agent would have run the factors in order: a **voice challenge** (repeat these digits), then an **SMS code** to the number on file, then a **callback** to that same number. The first failure ends the round, and the rounds are capped.
 
-- Mock mode needs no model and no audio. It plays one of five scripted calls through the real state machine and the real scoring code, so you can run against it without the models.
-- Real mode fetches each speech span, decodes it and measures it with classical signal processing in `detector/analysis`. No trained model is in the serving path yet. All five signals run once the person has a reference voice stored; until then voice match reports `not_run` and the call is judged on the other four, which is how a different person reading the attacker's script used to be allowed.
+**The model never decides authorisation.** It can ask for an action; the gate decides, in Python, on the detector's answer. A prompt cannot talk its way past it.
 
-Enrolling someone stores a pitch and a spectral envelope, never the recording, and a separate print per channel because a handset and a browser microphone put a different response in front of the same voice. `POST /enrol/voice` is the operator route; the agent's own `POST /v1/enrollments` writes into the same store behind the consent record and a verified SMS code, and lands a print once the hidden listener exists to hear the prompts.
+## Architecture
 
-The detector also has a bank-detail check. It compares spoken digits against an expected account number, and the expected number never appears in a response, a log line or an error body. `docs/DETECTOR.md` covers it. It is off unless `CALLBACK_BANK_VERIFY_ENABLED=1`, and the agent never calls it.
+```mermaid
+flowchart TB
+    Caller([Caller on a phone or in a browser])
+
+    subgraph AGENT["Voice agent, on LiveKit"]
+        direction LR
+        STT[Transcribe] --> LLM[Model picks a tool]
+        LLM --> GATE{{"The gate: Python, never a prompt"}}
+    end
+
+    subgraph DET["Detection service, FastAPI"]
+        direction LR
+        V1["/v1: sessions, turns, challenges, OTP, authorize"]
+        ANALYSIS[Five signals, classical DSP]
+        SCORE[Blend and decide]
+        PRINTS[("Voice prints, per person per channel")]
+        V1 --> ANALYSIS --> SCORE
+        PRINTS -.-> ANALYSIS
+    end
+
+    RAMP[(Ramp sandbox: bills, vendors, holds)]
+    HUMAN([A person approves before money moves])
+    DASH["Review dashboard, web/"]
+
+    Caller --> AGENT
+    GATE -->|"POST /authorize, 3 s budget"| V1
+    SCORE -->|"allow, step_up or deny"| GATE
+    GATE -->|allow| RAMP
+    GATE -->|"deny, and hold the vendor"| RAMP
+    RAMP --> HUMAN
+    SCORE -.->|"GET /review"| DASH
+
+    classDef gate fill:#a8322a,stroke:#a8322a,color:#ffffff
+    classDef store fill:#191714,stroke:#191714,color:#ffffff
+    classDef good fill:#3d6b45,stroke:#3d6b45,color:#ffffff
+    class GATE gate
+    class PRINTS,RAMP store
+    class HUMAN good
+```
+
+## Inside the detector
+
+Audio arrives as a reference, never inline. Everything below runs per span, and every failure path resolves to deny.
+
+```mermaid
+flowchart TB
+    URI["AudioRef.uri"] --> FETCH{"Fetch: allowlisted host only"}
+    FETCH -->|refused| NONE
+    FETCH -->|"8 MiB cap, 400 ms"| DECODE["Decode: pcm_s16le, WAV by magic, flac"]
+    DECODE --> CTX[Frame, spectrogram, pitch track]
+
+    CTX --> S1["Is it the right voice: 0.35"]
+    CTX --> S2["Was it synthesised: 0.25"]
+    CTX --> S3["Is it a recording: 0.15"]
+    META["Turn timings"] --> S4["Is a bot driving it: 0.15"]
+    CTX --> S5["Is anyone breathing: 0.10"]
+
+    S1 --> BLEND
+    S2 --> BLEND
+    S3 --> BLEND
+    S4 --> BLEND
+    S5 --> BLEND["Weighted blend over the signals that ran"]
+    NONE["Nothing measured"] -->|"blends to 1.00, not 0.00"| BLEND
+
+    BLEND --> R1{"Replay or bot at or below 0.10?"}
+    R1 -->|yes| DENY
+    R1 -->|no| R2{"Any signal failed?"}
+    R2 -->|"yes, and a code cannot rescue it"| DENY
+    R2 -->|"yes, a code might"| STEP
+    R2 -->|no| BAND{"Blended risk"}
+    BAND -->|"below 0.30"| ALLOW
+    BAND -->|"0.30 to 0.55"| STEP
+    BAND -->|"0.55 and above"| DENY
+
+    ALLOW([allow])
+    STEP([step up])
+    DENY([deny])
+
+    classDef bad fill:#a8322a,stroke:#a8322a,color:#ffffff
+    classDef good fill:#3d6b45,stroke:#3d6b45,color:#ffffff
+    classDef warn fill:#9a6207,stroke:#9a6207,color:#ffffff
+    class DENY,NONE bad
+    class ALLOW good
+    class STEP warn
+```
+
+Three details in there are the whole safety argument, and each exists because the obvious version is wrong:
+
+| Rule | Why |
+|---|---|
+| Nothing measured blends to **1.00**, not 0.00 | "No evidence" and "perfect evidence" must never be the same number. A detector that scored nothing used to read as a detector that found nothing wrong. |
+| A failing signal can **never** become an allow | Weights renormalise over the signals that ran, so one failure can be diluted below the allow line by a handful of passes. |
+| Replay and bot-driving are **unrescuable** | A correct code does not make a played-back recording legitimate. Those two withhold the step-up, which drops the middle band to deny. |
+
+Spans combine by **lowest score per signal**, never averaged. One clearly bad second of audio is evidence, and averaging it against three clean ones is how a short burst of a recording gets smoothed away.
+
+## What it actually measures
+
+Every number below came out of the real service. `showcase/build.py` drives `detector.app` over its own HTTP interface and records what comes back, so these cannot drift from what the agent receives.
+
+| what the caller sent | no reference voice | reference enrolled |
+|---|---|---|
+| the real CFO | allow `0.07` | allow `0.04` |
+| **a different person reading the script** | **allow `0.05`** | challenge `0.37` |
+| the same voice, played back down the line | deny `0.30` | deny `0.17` |
+| a synthesiser reading the same script | deny `0.59` | challenge `0.35` |
+| a recording first, then a live voice | deny `0.34` | deny `0.20` |
+| no audio at all | deny `1.00` | deny `1.00` |
+| a span this deployment will not fetch | deny `1.00` | deny `1.00` |
+
+**Read the second row.** With no reference voice on file, a live human reading the attacker's script is *allowed*. Synthesis, replay and liveness all pass a live human at a handset, because a live human at a handset is exactly what those three are looking for. Only the voice comparison would notice, and it cannot run without something to compare against. That is what enrolment is for.
+
+The fourth row goes the other way, and it is the intended policy rather than a regression: a clone of the vendor is **supposed** to match on voice, so the two signals that did catch it become a smaller share of the total. What stops a clone is the texted code, not the blended score.
+
+The detector explains itself in words, not just scores:
+
+```
+replay failed at 0.12. Replay channel: fixed 1.2 ms spectral comb, 13.0x the
+cepstral baseline (a reflection in the playback path); speech offsets decay at
+only 23 dB/s (RT60 ~ 2590 ms), consistent with a room in the path; gaps between
+words only 24 dB below speech and spectrally matched to it (r=0.61): a
+reverberant tail. 2 of 6 cues flagged.
+```
+
+That sentence goes in front of the person deciding whether to release a held payment.
+
+### The five signals
+
+| signal | weight | what it reads |
+|---|---|---|
+| `voice_match` | **0.35** | Pitch register in semitones, long-term spectral shape, against an enrolled reference. |
+| `synthetic_speech` | **0.25** | Vocoder phase jitter, pitch and amplitude perturbation, rhythm regularity, noise floor. |
+| `replay` | **0.15** | Cepstral comb from a loudspeaker, offset decay, the level and spectrum of inter-word gaps. |
+| `agent_behaviour` | **0.15** | Turn-taking latency and its variance. |
+| `liveness` | **0.10** | Breath events, pause irregularity, pitch micro-variation and contour. |
+
+Thresholds: allow below `0.30`, deny at or above `0.55`, step up in between. Either fatal signal at or below `0.10` denies outright. A resolved code carries `0.40` of the blend.
 
 ## Rules we don't break
 
-- The LLM never decides authorization. The gate is Python code, not a prompt. It acts only on the decision the detection service sends back.
-- Fail closed, on both sides. If the detection service errors or times out, the agent denies the request, and a denied money move also puts the vendor on hold. Inside the detector, every failure path resolves to deny. A service that can't reach a confident answer refuses the call rather than waving it through.
-- Holding is always allowed. A hold protects the company, so it never needs verification.
-- A voiceprint match never authorizes anything alone. A high deepfake score overrides any voiceprint score, and the detector never averages a failing signal into an allow. A good voice match doesn't rescue a recording.
-- We never use a number the caller gives. SMS codes and callbacks go only to the number already on file.
-- Never commit API keys. Secrets go in `.env`, which git ignores. `.env.example` lists the variable names and holds no values.
+- **The model never decides authorisation.** The gate is Python. It acts only on the decision the detector sends back.
+- **Fail closed, on both sides.** A detector that errors, times out or returns nonsense is a deny, and a denied money move also puts the vendor on hold. Inside the detector every failure path resolves to deny.
+- **Holding is always allowed.** A hold protects the company, so it never needs verification.
+- **A voice match never authorises anything alone.** A high deepfake score overrides any voiceprint score, and a failing signal is never averaged into an allow.
+- **We never use a number the caller gives us.** Codes and callbacks go only to the number already on file.
+- **The expected bank digits are never spoken, logged or returned.** The caller has to produce them unprompted.
+- **No secrets in git.** `.env.example` lists every variable name and no values.
 
-## The contract
+## Privacy
 
-<!-- CONTRACT-SECTION -->
+Enrolment stores a **voice print**, never a recording: a median pitch, two durations and a long-term average log spectrum. About 1.6 KB against a quarter of a megabyte of audio, and nothing that was said can be recovered from it, because everything carrying what was said has been averaged away. Prints are stored per person **per channel**, because a handset and a browser microphone put a different frequency response in front of the same larynx.
 
-The agent and the detection service talk over `callback_shared` 1.2.0 (`shared/src/callback_shared/contract.py`), served by the detector under `/v1`. `docs/CONTRACT.md` describes the detector's internal `/events` API, which the agent does not use.
+A person agrees out loud before any print is made, the consent text and their spoken yes are stored with it, and `DELETE /v1/enrollments/{user_id}` erases both channels.
 
 ## Repo layout
 
 | Path | Owner | What it does |
 |---|---|---|
-| `agent/` | Veer | The voice agent, built on LiveKit Agents. It has the detector client, the Ramp client, the gate, the tools the LLM can call, and the step-ups. |
-| `detector/` | Eric | The detection service, over HTTP: the state machine, the signal analysis, the scoring and the review dashboard. |
-| `shared/` | Both | The contract between the agent and the detector, plus a reference client. We change it only together. |
-| `training/` | Eric | Dataset downloads, features, model training and metrics for the detector. No audio goes in git. |
-| `examples/` | Eric | An agent skeleton, and scripts that drive the detector in mock and real mode. |
-| `tests/` | Eric | The detector's tests: contract, detector and training suites. The agent's tests are in `agent/tests/`. |
-| `schemas/` | Eric | Frozen JSON-schema snapshots of the detector's request and response models. |
-| `scripts/` | Eric | A check that a Modal deploy of the detector would work, without deploying it. |
-| `docs/` | Both | Veer's spec (a copy of our Notion page), demo runbook, build plan and research notes. Eric's contract, detector guide and agent integration guide. |
+| `agent/` | Veer | The voice agent on LiveKit: detector client, Ramp client, the gate, the tools the model can call, the step-ups. |
+| `detector/` | Eric | The detection service over HTTP: state machine, signal analysis, scoring, enrolment, review surface. |
+| `web/` | Veer | The review dashboard. Next.js, reads the detector server-side so the token never reaches the browser. |
+| `showcase/` | Eric | A self-contained page showing what the detector hears, built from real measurements. |
+| `shared/` | Both | The agent contract (`callback_shared`) and the detector's internal `/events` models. Changed only together. |
+| `training/` | Eric | Dataset downloads, features, model training and metrics. No audio in git. |
+| `tests/` | Eric | The detector's suites. The agent's are in `agent/tests/`. |
+| `schemas/` | Eric | Frozen JSON-schema snapshots, with drift tests. |
+| `examples/` | Eric | An agent skeleton and scripts that drive the detector in mock and real mode. |
+| `docs/` | Both | The contract, the detector guide, the agent integration guide, the demo runbook, the contract ruling. |
 | `ci/` | Eric | The GitHub Actions workflow, parked until the token has `workflow` scope. |
-| `Dockerfile` | Veer | Builds a cloud copy of the agent worker, kept as a backup. |
-| `Makefile` | Eric | Install, test, lint and run targets for the detector. |
-| `.env.example` | Both | Every environment variable name, grouped by component, with no values. |
 
 ## Running it
 
-You need [uv](https://docs.astral.sh/uv/). The agent uses Python 3.13 and the detector uses Python 3.11. uv installs either one if you don't have it.
-
-Copy `.env.example` to `.env` in the repo root. It lists every variable name. The agent loads `.env` itself. The detector reads only its process environment, so pass its variables on the command line, as below.
-
-### The agent
-
-1. In `.env`, fill in the LiveKit, Deepgram, OpenAI, Cartesia and Ramp sandbox values. A variable already set in your shell wins over the file.
-2. Set `DETECTOR_URL` and `DETECTOR_TOKEN` to the detection service's URL and token. If the detector runs in mock mode, set `DETECTOR_SCENARIO` to the call you want to play.
-3. Start the worker:
-
-```bash
-cd agent
-uv sync
-uv run -m livekit.agents download-files
-uv run agent.py dev
-```
-
-`DETECTOR_SCENARIO` is one of `real_cfo`, `cloned_voice`, `replay`, `ai_agent` or `human_impostor`. The worker reads its settings when it starts, so restart it after you change the scenario. Leave the scenario empty when you point at a detector in real mode. In mock mode the SMS code is always `424242`.
-
-The worker registers as `callback`. Phone calls reach it through the dispatch rule in `agent/dispatch-rule.json`, which has to be added to your LiveKit project first. A browser session has to name the agent `callback` too. `docs/demo-runbook.md` walks through the five calls and what each should do.
-
-### The detector
-
-Mock mode runs with no model and no audio. Serve it from the repo root:
+Mock mode needs no model and no audio. It plays five scripted calls through the real state machine and the real scoring code.
 
 ```bash
 CALLBACK_API_TOKEN=kit-test uv run uvicorn detector.app:app --port 8021
-```
-
-Then, in another shell, drive all five scenarios through it end to end:
-
-```bash
 uv run python examples/drive_mock.py --base-url http://127.0.0.1:8021 --token kit-test
 ```
 
-The five scenarios are the same five names as above. Pick one per call with the `X-Callback-Scenario` header. Mock mode adds 150 to 400 ms of latency to each request on purpose, so client timeout handling gets exercised.
+```
+scenario        decision  state    risk   factors
+real_cfo        allow     allowed  0.045  5 factors, all pass
+cloned_voice    allow     allowed  0.262  6 factors, fail: synthetic+liveness
+replay          deny      denied   0.386  5 factors, fail: replay+liveness
+ai_agent        deny      denied   0.690  5 factors, fail: voice+synthetic+agent+liveness
+human_impostor  allow     allowed  0.199  6 factors, fail: voice
 
-Real mode uses the same endpoints, with the audio measured instead of scripted. Restart the detector with two more variables and drive it with waveforms:
+all 5 checks behaved as documented.
+```
+
+Real mode measures actual waveforms instead:
 
 ```bash
 CALLBACK_API_TOKEN=kit-test CALLBACK_MOCK_MODE=0 CALLBACK_AUDIO_ENABLED=1 uv run uvicorn detector.app:app --port 8021
-```
-
-```bash
 uv run python examples/drive_real.py --base-url http://127.0.0.1:8021 --token kit-test
 ```
 
-That runs every case twice, once with nothing enrolled for the person and again after storing a reference voice, because the difference is the point:
+That prints the table above, every case run twice, once with a reference voice on file and once without.
 
-```
-what the caller sent                             not enrolled            enrolled
-a live caller                                      allow 0.07          allow 0.04
-a different person reading the script              allow 0.05      challenge 0.37
-the same voice, played back down the line           deny 0.30           deny 0.17
-a synthesiser reading the same script               deny 0.59      challenge 0.35
-a recording first, then a live voice                deny 0.34           deny 0.20
-no audio at all                                     deny 1.00           deny 1.00
-```
-
-A live caller allows. A replayed recording denies on its room acoustics. A call with no readable audio denies too, because a caller nothing could be measured against is not a caller who passed.
-
-The second row is the one to read: without a reference voice, a different person reading the attacker's script is allowed, because synthesis, replay and liveness all pass a live human at a handset and voice match is the only signal that notices. The fourth row goes the other way, and `docs/DETECTOR.md` explains why that is the intended policy rather than a regression: a clone is supposed to match on voice, and what catches it is the SMS code, not the blended score.
-
-In production the detector fetches audio over https, and only from hosts named in `CALLBACK_AUDIO_ALLOWED_HOSTS`. The address comes from the request, so an unrestricted fetcher would be a way into your network. `docs/DETECTOR.md` has the threat model and every limit.
-
-More on the detector:
-
-- [`docs/DETECTOR.md`](docs/DETECTOR.md) to run the detector locally
-- [`docs/CONTRACT.md`](docs/CONTRACT.md) for the API between the agent and the detector
-- [`docs/AGENT-INTEGRATION.md`](docs/AGENT-INTEGRATION.md) for wiring an agent to the detector
-
-### Tests
-
-The agent and the shared package:
+Build the showcase page, which needs nothing running:
 
 ```bash
-(cd agent && uv run pytest)
-(cd shared && uv run --group dev pytest)
+uv run python showcase/build.py
 ```
 
-Most of the agent tests run against fakes, so they need no keys. Two of them call a live service, a running detection service and the Ramp sandbox. They are skipped unless you export `DETECTOR_URL` and `DETECTOR_TOKEN`, or `RAMP_CLIENT_ID` and `RAMP_CLIENT_SECRET`, in your shell. The tests marked `llm` call GPT-4.1, so they need `OPENAI_API_KEY` and are skipped without it. pytest doesn't read `.env`.
-
-The detector, from the repo root:
+The tests:
 
 ```bash
-make test                                       # the suite
-make lint                                       # ruff check and a format check
-uv run python -m detector.analysis.calibration  # the analysis, on synthetic audio
+make test                          # the detector, 1,508
+cd shared && uv run pytest         # the contract, 14
+cd agent && uv run pytest          # the agent, 1,941
+cd web && npm test                 # the dashboard
 ```
 
-## Reviewing a call
+More: [`docs/DETECTOR.md`](docs/DETECTOR.md) to run and understand the detector &middot; [`docs/CONTRACT.md`](docs/CONTRACT.md) for the internal `/events` API &middot; [`docs/AGENT-INTEGRATION.md`](docs/AGENT-INTEGRATION.md) for wiring an agent to it.
 
-`GET /review` on the detector is a dashboard a person can open. It shows the decision, every signal with its number and the reason behind it, the request timeline, and the code attempt history. `GET /metrics` is Prometheus text. Both need the service token. The metrics labels carry the decision mix, so an open scrape would publish the deny rate. That is why it is not open by default.
+## Limits
 
-## Privacy
+Named here rather than discovered later.
 
-- We don't keep raw call audio. Session recording is fully off (`record=False`): LiveKit records no audio, uploads no transcript, and exports no traces or logs.
-- A voiceprint is a set of numbers derived from a person's voice. We make one only after the person agrees out loud, and we delete it by November 30, 2026, or sooner if they ask.
-- Before it enrolls a voiceprint, the agent reads this consent text, and we store its version and the person's spoken "yes":
-
-  > To protect your company's account, Callback creates a voiceprint, a set of numbers derived from your voice, and analyzes call audio and transcripts for fraud. Raw audio is not kept. Your data is deleted by November 30, 2026, or sooner if you ask. Do you agree?
-
-- Every call opens with a spoken disclosure that the call is recorded and analyzed by automated fraud checks. California requires consent from every party, so we say it even though we don't keep the audio.
-- The caller does say the full bank numbers aloud. Deepgram transcribes them, and GPT-4.1 receives them as the arguments of the bank-change tool. The agent never forwards a full bank number: forwarded turns have every number replaced by [NUM], numerals of any length and runs of two or more spoken digit words alike (only the caller's answer to a voice challenge keeps its digits, unless a run is 7 or more), and the authorize call carries the last four digits and a keyed fingerprint. The detector never puts an expected account number in a response, a log line or an error body.
-- The exceptions are on Eric's side: training recordings and team test calls. Training speakers sign a separate written form, and we delete those recordings by December 31, 2026. A test call is recorded only with a consent row, and deleted after 7 days. No audio is in this repo, and we don't release raw audio.
+- **No trained model is in the serving path.** The detector is classical signal processing. A training pipeline exists in `training/` and has run once as a smoke test that scored an EER of 0.50, which is chance. It has never seen real data, because two of the six datasets never finished downloading.
+- **The thresholds are calibrated against synthetic audio** generated in this repository, not a corpus of real attacks. The synthesis detector looks for the absence of micro-variation, and a current commercial clone reproduces micro-variation deliberately, so it would very likely do worse there than the numbers above suggest. The replay detector rests on room acoustics, which is physics, and should travel better.
+- **`voice_match` is not speaker verification.** It compares pitch register and spectral shape. It catches an obviously different talker and nothing finer. Two people with similar voices match here even when you could tell them apart instantly.
+- **The hidden listener is not built.** The detector is designed to join the room and hear the caller itself. Until it does, `/v1` gets its audio from clips the agent uploads with a turn (contract 1.2.0), and without those a real-mode challenge resolves `no_audio`.
+- **Nothing is deployed, and CI has never run.** The workflow is parked in `ci/` waiting on a token scope, so every test count here was measured locally.
+- **Sessions live in process memory.** One container owns them, and a restart loses them.
 
 ## Team
 
-Veer Sahasi built the voice agent. Eric Catalano built the detection service. We made Callback for the BBS x Ramp Hackathon.
+Built by **Eric Catalano** and **Veer Sahasi** for the BBS x Ramp hackathon. Eric built the detection service, the signal analysis, enrolment, scoring and the showcase. Veer built the voice agent, the Ramp integration, the gate and the review dashboard. The contract between them was settled by a written ruling in [`docs/contract/`](docs/contract/) after three independent reviews of 31 conflicts.
