@@ -48,39 +48,35 @@ sequenceDiagram
     actor Caller
     participant Agent as Voice agent
     participant Gate as The gate
-    participant Det as Detector /v1
-    participant Ramp
+    participant Det as Detector
 
     rect rgba(61,107,69,0.10)
-        note over Caller,Ramp: Identify. Nothing is authorised yet.
+        note over Caller,Det: Identify. Nothing is authorised yet.
         Caller->>Agent: dials the number on the invoice
-        Agent->>Agent: speaks the recording disclosure
-        Agent->>Det: POST /v1/sessions
-        Agent->>Det: POST /v1/sessions/{id}/caller
+        Agent->>Det: opens a session for this vendor
     end
 
     rect rgba(25,23,20,0.06)
-        note over Caller,Ramp: Listen. Every finished turn is forwarded.
+        note over Caller,Det: Listen. Every finished sentence is scored.
         Caller->>Agent: "I need to update our bank details"
-        Agent->>Det: POST /v1/sessions/{id}/turns
-        Det-->>Agent: RiskUpdate on the risk topic, about every 2 s
+        Agent->>Det: forwards the words and the audio
+        Det-->>Agent: risk so far, updated as the call runs
     end
 
     rect rgba(168,50,42,0.12)
-        note over Caller,Ramp: Authorise. Tier 2, a money move.
-        Agent->>Gate: the model asks for update_vendor_bank_account
-        Gate->>Det: POST /v1/sessions/{id}/authorize
-        Det->>Det: five signals blend to 0.17
-        Det->>Det: replay failed, and a code cannot rescue a replay
-        Det-->>Gate: deny
+        note over Caller,Det: Decide. Moving money needs an answer.
+        Agent->>Gate: the model asks to change the bank details
+        Gate->>Det: may this go ahead?
+        Det->>Det: five signals scored, blended risk 0.17
+        note over Gate,Det: a low average cannot save a call<br/>when one signal fails outright
+        Det-->>Gate: deny. the voice was a recording
     end
 
     rect rgba(168,50,42,0.12)
-        note over Caller,Ramp: Refuse, and protect the vendor anyway.
-        Gate->>Ramp: hold the vendor
-        Gate-->>Agent: refuse the request
+        note over Caller,Det: Refuse, and protect the vendor anyway.
+        Gate-->>Agent: refused
         Agent->>Caller: declines, ends the call
-        Agent->>Det: POST /v1/sessions/{id}/end
+        note over Gate,Det: the vendor is held in Ramp,<br/>and the call is kept for review
     end
 ```
 
