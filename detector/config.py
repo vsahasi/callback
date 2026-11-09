@@ -61,6 +61,13 @@ class Settings:
     # which is the safe direction: a misnamed or empty secret must not leave
     # the detector open.
     api_token_generated: bool = False
+    #: A second bearer token that opens /review and its JSON, and nothing
+    #: else. Empty means the feature is off and /review takes the service
+    #: token alone. The dashboard runs on Vercel and is read in a browser,
+    #: so without this it has to carry the token that can authorize a
+    #: payment and read a full phone number. /v1, /events and /metrics
+    #: never accept this one.
+    review_token: str = ""
     # Extra idle time, on top of the TTL, before a session may be
     # evicted. 0 means derive it from the TTL, which is the safe
     # default: retention then stays at least twice the TTL however
@@ -156,12 +163,20 @@ class Settings:
             raise ValueError("DETECTOR_TOKEN and CALLBACK_API_TOKEN differ")
         supplied = primary or legacy
         generated = not supplied
+        # A second token, for the dashboard alone. Refused when it equals the
+        # service token, because that leaves the isolation with no effect at
+        # all while looking configured, and the point of the setting is that
+        # the two differ.
+        review = os.environ.get("CALLBACK_REVIEW_TOKEN", "").strip()
+        if review and supplied and review == supplied:
+            raise ValueError("CALLBACK_REVIEW_TOKEN must differ from DETECTOR_TOKEN")
         mock_sms = os.environ.get("CALLBACK_MOCK_SMS", "").strip().lower()
         if mock_sms not in {"", "twilio"}:
             raise ValueError('CALLBACK_MOCK_SMS must be blank or "twilio"')
         return cls(
             api_token=supplied or secrets.token_urlsafe(32),
             api_token_generated=generated,
+            review_token=review,
             mock_mode=_env_bool("CALLBACK_MOCK_MODE", True),
             session_ttl_seconds=_env_int("CALLBACK_SESSION_TTL_SECONDS", 300),
             otp_max_attempts=_env_int("CALLBACK_OTP_MAX_ATTEMPTS", 3),

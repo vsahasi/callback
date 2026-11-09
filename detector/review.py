@@ -23,9 +23,8 @@ nothing already on the app.
 
 Routes added, and the auth on each
 ----------------------------------
-Every one of these requires the service bearer token. There is no
-unauthenticated route in this module, because every one of them exposes
-fraud-decision detail.
+Every one of these requires a bearer token. There is no unauthenticated route
+in this module, because every one of them exposes fraud-decision detail.
 
     GET  /metrics                                   bearer
     GET  /review                                    bearer or basic
@@ -40,7 +39,17 @@ and acts as an oracle for an attacker who wants to know whether their call was
 caught. `ObservabilityConfig(metrics_require_auth=False)` exists for a private
 network and has to be asked for by name.
 
-The `/review` routes additionally accept HTTP Basic carrying the same token.
+Two tokens, not one. `/metrics` takes the service token alone. The `/review`
+routes take the service token or, when `CALLBACK_REVIEW_TOKEN` is set, that
+second read-only token as well. The dashboard is served from Vercel and read
+in a browser, so without the second one it has to hold the credential that can
+authorize a payment and read a full phone number from `/v1/users/{id}`. The
+review token reaches nothing else: `/v1` and `/events` check the service token
+directly and never consult this module's guard, and `/metrics` is given its
+own guard that does not carry the review token, because its labels publish the
+decision mix and act as an oracle.
+
+The `/review` routes additionally accept HTTP Basic carrying either token.
 That is the whole reason Basic is here: a human opens the dashboard by typing a
 URL, a plain navigation cannot set an `Authorization` header, and a `?token=`
 query string would write the service token into every access log, proxy log and
@@ -1935,10 +1944,11 @@ def mount(
 
     resolved_config = config or ObservabilityConfig.from_env()
     redactor = Redactor(
-        # The bearer token and the mock code are the two literals this service
+        # The bearer tokens and the mock code are the literals this service
         # holds. A real-mode code is random per session and never leaves
-        # OtpState, which is why it is not listed here.
-        [settings.api_token, MOCK_OTP_CODE]
+        # OtpState, which is why it is not listed here. An unset review token
+        # is the empty string, which add_secrets drops.
+        [settings.api_token, settings.review_token, MOCK_OTP_CODE]
     )
     obs = observability or Observability(
         config=resolved_config, redactor=redactor, stream=stream
@@ -1961,7 +1971,13 @@ def mount(
     obs.bind_journal_size()
     obs.set_build_info(contract_version=CONTRACT_VERSION, mock_mode=settings.mock_mode)
 
-    auth = TokenAuth(settings.api_token)
+    # Two guards, deliberately. The review token opens the dashboard and its
+    # JSON and stops there, so /metrics keeps the service token alone: its
+    # labels carry the decision mix, which is an oracle for a caller who wants
+    # to know whether they were caught. /v1 and /events never reach this
+    # class, so neither can accept the review token however this is wired.
+    metrics_auth = TokenAuth(settings.api_token)
+    auth = TokenAuth(settings.api_token, extra_tokens=(settings.review_token,))
     builder = EvidenceBuilder(
         engine=engine,
         settings=settings,
@@ -1971,7 +1987,7 @@ def mount(
     )
 
     app.add_exception_handler(ReviewUnauthorized, unauthorized_handler(auth.realm))
-    app.include_router(metrics_router(obs, auth))
+    app.include_router(metrics_router(obs, metrics_auth))
     app.include_router(
         review_router(
             builder=builder,

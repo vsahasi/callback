@@ -10,7 +10,7 @@ route handlers, so the bearer token never reaches the browser.
 | Variable | Purpose |
 | --- | --- |
 | `DETECTOR_URL` | Detector base URL, for example `http://127.0.0.1:8000`. Empty serves fixtures (with `DASHBOARD_FIXTURES=1` to skip auth). |
-| `DETECTOR_TOKEN` | The detector's `CALLBACK_API_TOKEN`. Server-side only. |
+| `DETECTOR_TOKEN` | The bearer token this server presents to the detector. Set it to the detector's `CALLBACK_REVIEW_TOKEN`, not its `DETECTOR_TOKEN`: the read-only one opens `/review` and nothing else. Server-side only. |
 | `DASHBOARD_SOURCE` | Empty or `v1` reads `/review/api/v1/sessions`. `events` reads the older `/review/api/sessions`. |
 | `DASHBOARD_USER` | Basic-auth username for the dashboard. Empty accepts any username. |
 | `DASHBOARD_PASSWORD` | Basic-auth password. Required unless `DASHBOARD_FIXTURES=1` with no `DETECTOR_URL`; otherwise every route answers 503. |
@@ -98,8 +98,11 @@ servers. No code changes are needed. For a demo without a detector, set
 
 ## Follow-ups
 
-- Eric: give the dashboard its own read-only detector token. Today `DETECTOR_TOKEN`
-  is the same credential the agent uses for `/v1`, so a leak of the dashboard's
-  environment is a leak of the agent's credential.
+- Done. The detector now takes `CALLBACK_REVIEW_TOKEN`, a read-only token that
+  opens `/review` and its JSON and nothing else: not `/v1`, not `/events`, not
+  `/metrics`. Put that value in this project's `DETECTOR_TOKEN` variable.
+  Nothing here changes, because every call this dashboard makes is already a
+  `/review` one. A leak of this environment then exposes the review surface
+  instead of the credential that can authorize a payment.
 - With `DASHBOARD_SOURCE=events` the evidence bundle is cut down to the fields the
   page renders (`eventsBundle` in `src/lib/source.ts`) before it leaves the server.

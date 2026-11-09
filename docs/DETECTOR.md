@@ -95,6 +95,7 @@ curl -s "${H[@]}" -H "X-Callback-Scenario: real_cfo" -H "Content-Type: applicati
 |---|---|---|
 | `DETECTOR_TOKEN` | generated, so every call is a 401 | The bearer token. The agent reads the same name. |
 | `CALLBACK_API_TOKEN` | unset | The old name, read only when `DETECTOR_TOKEN` is blank. Both set and different: the process refuses to start. |
+| `CALLBACK_REVIEW_TOKEN` | unset | A second, read-only bearer token that opens `/review` and its JSON and nothing else. Not `/v1`, not `/events`, not `/metrics`. Unset means `/review` takes `DETECTOR_TOKEN` alone. Set it for any deployment: the dashboard is served from Vercel and read in a browser, so otherwise it holds the credential that can authorize a payment. Equal to `DETECTOR_TOKEN`: the process refuses to start, because that would look configured and isolate nothing. |
 | `CALLBACK_MOCK_MODE` | `true` | Mock mode runs the five scripts below. |
 | `USERS_ON_FILE_JSON` | unset | The user directory, inline JSON. Wins over the path. How the Modal secret supplies it. |
 | `USERS_ON_FILE_PATH` | unset | The user directory as a file. `users_on_file.example.json` is the committed example (a fictional 555-01xx number); the real `users_on_file.json` is gitignored. With neither set the directory is empty and a loud warning is printed. A bad file stops startup. |
@@ -620,6 +621,30 @@ which is how the agent side validates without matching this Python environment:
 ```bash
 CALLBACK_BASE_URL=https://your-mock-url CALLBACK_API_TOKEN=the-token uv run pytest tests/contract -v
 ```
+
+### The agent's conformance test once the real number is live
+
+The agent's `tests/test_conformance.py` asserts `phone_last_four == "0100"`,
+which is the fictional number in `users_on_file.example.json`. A deployment
+holding the real directory serves the real last four instead, so that one
+assertion fails there and the failure is expected, not a broken service.
+
+Nothing needs changing on the agent side. Run it against a local detector
+holding the example directory, which is what the assertion was written for:
+
+```bash
+# terminal 1, detector repo root
+DETECTOR_TOKEN=dev-local CALLBACK_MOCK_MODE=1 USERS_ON_FILE_PATH=users_on_file.example.json \
+  uv run uvicorn detector.app:app --port 8000 --no-access-log
+
+# terminal 2, agent repo
+cd agent && ( set -a && source ../.env && set +a && \
+  DETECTOR_URL=http://127.0.0.1:8000 DETECTOR_TOKEN=dev-local \
+  uv run pytest -m mock_detector tests/test_conformance.py tests/test_detector.py -v )
+```
+
+Everything else in that suite passes against the deployment either way. Only
+the last-four assertion depends on which directory is loaded.
 
 ## Changing the contract
 

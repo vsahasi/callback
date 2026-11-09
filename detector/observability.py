@@ -1852,7 +1852,7 @@ class ReviewUnauthorized(Exception):
 
 
 class TokenAuth:
-    """Bearer or Basic, both carrying the same service token.
+    """Bearer or Basic, carrying any one of the tokens this guard accepts.
 
     Bearer is what the agent and Prometheus send. Basic exists for exactly one
     reason: a human opening the dashboard in a browser. A plain navigation
@@ -1860,16 +1860,37 @@ class TokenAuth:
     writes it into every access log, proxy and Referer header. With Basic the
     browser prompts, the token travels in the header, and the page's own
     `fetch` calls inherit the credentials for free.
+
+    `extra_tokens` is how the read-only review token reaches /review without
+    reaching anything else. `detector.review.mount` builds one guard that
+    holds it and a separate guard for /metrics that does not. /v1 and /events
+    do not use this class at all, so they cannot accept it by construction.
     """
 
-    def __init__(self, token: str, *, realm: str = "Callback review") -> None:
-        self.token = token
+    def __init__(
+        self,
+        token: str,
+        *,
+        extra_tokens: Sequence[str] = (),
+        realm: str = "Callback review",
+    ) -> None:
+        # Empty values are dropped rather than stored: compare_digest("", "")
+        # is True, so keeping one would let a bare "Bearer " authenticate.
+        # No tokens at all means nothing matches, which is the safe direction.
+        self.tokens: tuple[str, ...] = tuple(
+            value for value in (token, *extra_tokens) if value
+        )
         self.realm = realm
 
     def _matches(self, presented: str) -> bool:
-        return secrets.compare_digest(
-            presented.encode("utf-8"), self.token.encode("utf-8")
-        )
+        raw = presented.encode("utf-8")
+        # Every accepted token is compared, with no early return, so the time
+        # taken says neither which one matched nor how many there are.
+        matched = False
+        for candidate in self.tokens:
+            if secrets.compare_digest(raw, candidate.encode("utf-8")):
+                matched = True
+        return matched
 
     def check(self, authorization: str | None, *, challenge: bool = False) -> None:
         """Raise `ReviewUnauthorized` unless the header carries the token."""
