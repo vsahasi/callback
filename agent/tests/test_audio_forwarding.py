@@ -534,3 +534,55 @@ async def test_the_real_client_posts_the_segment_to_events_and_a_404_raises_noth
     assert body["audio"]["uri"].startswith("data:audio/wav;base64,UklGR")  # "RIFF"
     assert "UklGR" not in caplog.text  # no base64 in any log line
     assert max(len(line) for line in caplog.text.splitlines()) < 200
+
+
+# --- the live call of 2026-11-09 (job AJ_haRUD2HE4YQb), replayed with its own timestamps -------
+# The agent's disclosure ran 0 to 12.4 s, its question 13.4 to 14.7 s, and the caller answered at
+# 17.0 s (a 2.25 s segment), committed at 19.3 s, not interrupted. The segment is sent at once: it
+# began 2.3 s after the agent's last line ended, and nothing covers it. What was dropped as echo on
+# that call were other segments, the ones the handset's echo opened during the agent's own lines.
+
+CALL = 1794287144.584  # the agent's first word, Unix seconds
+
+
+def caller(wired, old: str, new: str, at: float) -> None:
+    wired.session.fire("user_state_changed", user_changed(old, new, at=at))
+
+
+def test_a_reply_that_begins_after_the_agents_question_is_sent_not_held():
+    wired = wire()
+    agent_speaks(wired, CALL, CALL + 12.400)
+    agent_speaks(wired, CALL + 13.412, CALL + 14.715)
+    caller(wired, "listening", "speaking", at=CALL + 16.994)
+    hear(wired, 2.25, start_s=CALL + 16.994)
+    caller(wired, "speaking", "listening", at=CALL + 19.244)
+    [reply] = segments(wired)  # sent as soon as it was cut, not held for the turn
+    assert reply.start_ms == 1794287161578 and reply.duration_ms == 2240  # 112 frames of 20 ms
+    assert reply.metadata["turn_latencies_ms"] == [2279]  # 17.0 s less the question's end, 14.7 s
+    commits(wired, "hi", CALL + 19.3, final("hi", CALL + 17.05, CALL + 19.1))
+    assert wired.sent[-1].interrupted is False
+    assert segments(wired) == [reply]  # the commit released nothing and dropped nothing
+
+
+def test_the_echo_of_the_agents_line_is_held_and_the_real_reply_still_goes_out(caplog):
+    # The VAD opened "speaking" 1.05 s into the disclosure (LiveKit's speech_start_time on that
+    # call), on the handset's echo. That stretch is held and later dropped; the reply at 17.0 s is
+    # not, and the close line counts both, so the two cannot be read as the same segments.
+    wired = wire()
+    agent_speaks(wired, CALL, None)
+    caller(wired, "listening", "speaking", at=CALL + 1.05)
+    hear(wired, 0.7, start_s=CALL + 1.05)
+    caller(wired, "speaking", "listening", at=CALL + 1.75)
+    agent_stops(wired, CALL + 12.400)
+    agent_speaks(wired, CALL + 13.412, CALL + 14.715)
+    caller(wired, "listening", "speaking", at=CALL + 16.994)
+    hear(wired, 2.25, start_s=CALL + 16.994)
+    caller(wired, "speaking", "listening", at=CALL + 19.244)
+    [reply] = segments(wired)
+    assert reply.start_ms == 1794287161578
+    commits(wired, "hi", CALL + 19.3, final("hi", CALL + 17.05, CALL + 19.1))
+    with caplog.at_level(logging.INFO, logger="callback_agent.session_wiring"):
+        wired.session.fire("close", None)
+    assert segments(wired) == [reply]
+    [line] = [r.getMessage() for r in caplog.records if "echo" in r.getMessage()]
+    assert "1 segments dropped as echo" in line and "1 other segments were forwarded" in line
