@@ -2,7 +2,11 @@
 
 from livekit.agents import AgentSession, BackgroundAudioPlayer, BuiltinAudioClip
 
-from callback_agent.session_wiring import THINKING_SOUND, TURN_HANDLING
+from callback_agent.session_wiring import (
+    BACKGROUND_STREAM_TIMEOUT_MS,
+    THINKING_SOUND,
+    TURN_HANDLING,
+)
 
 
 async def test_livekit_accepts_the_turn_handling():
@@ -28,9 +32,30 @@ def test_a_false_interruption_pauses_the_agent_for_at_most_a_second():
     assert TURN_HANDLING["interruption"]["false_interruption_timeout"] <= 1.0
 
 
-async def test_hold_music_plays_quietly_while_the_agent_thinks():
+def test_interruptions_come_from_the_local_vad_not_the_cloud_model():
+    # On the rehearsal calls the cloud "adaptive" detector paused the agent three times a call on
+    # handset echo, and its 100 ms polls cost a network round trip each. The VAD runs here, and
+    # the thresholds below are what decide, nothing else.
+    assert TURN_HANDLING["interruption"]["mode"] == "vad"
+
+
+def test_handset_echo_shorter_than_most_of_a_second_is_not_an_interruption():
+    assert TURN_HANDLING["interruption"]["min_duration"] >= 0.8
+
+
+async def test_hold_music_is_about_as_loud_as_the_agents_voice():
+    # The built-in clip is -22 dBFS. At 0.25 it went out at -34 dBFS and no caller heard it over
+    # a narrowband phone line. 0.8 is -24 dBFS, just under speech.
     [sound] = THINKING_SOUND
     assert sound.source is BuiltinAudioClip.HOLD_MUSIC
-    assert 0 < sound.volume <= 0.4  # under the agent's voice and the caller's
-    player = BackgroundAudioPlayer(thinking_sound=THINKING_SOUND)  # never started
+    assert 0.6 <= sound.volume <= 1.0
+    player = BackgroundAudioPlayer(
+        thinking_sound=THINKING_SOUND, stream_timeout_ms=BACKGROUND_STREAM_TIMEOUT_MS
+    )  # never started
     await player.aclose()
+
+
+def test_the_music_mixer_waits_for_a_slow_frame_instead_of_dropping_it():
+    # The player's default gives the clip decoder 200 ms per frame. The first frame of a call on a
+    # cold process took longer, and the mixer logged a timeout and put out silence for that block.
+    assert BACKGROUND_STREAM_TIMEOUT_MS >= 1000

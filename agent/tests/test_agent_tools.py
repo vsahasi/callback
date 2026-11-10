@@ -37,7 +37,7 @@ from callback_agent import prompts
 from callback_agent.actions import ActionRequest
 from callback_agent.agents import CallbackAgent
 from callback_agent.gate import Gate
-from callback_agent.ramp import HoldOutcome, RampClient, Vendor
+from callback_agent.ramp import HoldOutcome, Vendor, match_vendor
 from callback_agent.session_wiring import TOOL_HANDLING
 from callback_agent.state import CallState
 from callback_agent.toolbox import Toolbox
@@ -356,7 +356,11 @@ async def test_a_deny_that_hangs_up_while_the_tool_holds_the_gate_lock_cannot_de
     state = CallState(room_name="r1", caller_identity="c", channel=Channel.PHONE)
     ramp = FakeRamp()
     ramp.vendors = [Vendor(id="v1", name="Acme Supplies Inc", is_active=True)]
-    ramp.find_vendor = lambda name: RampClient.find_vendor(ramp, name)
+
+    async def find_vendor(name: str) -> Vendor | None:
+        return match_vendor(name, await ramp.list_vendors())  # the real matching, over the fake
+
+    ramp.find_vendor = find_vendor
     holder: dict[str, AgentSession] = {}
     call = ClosingFromTheNetwork(lambda: holder["session"])
     speaker = SilentSpeaker() if voice == "silent" else SessionVoice(holder)
@@ -439,7 +443,7 @@ class HoldsInFlight(FakeRamp):
             self.vendor_hold = HoldOutcome.PENDING_APPROVAL
 
     async def find_vendor(self, name: str):
-        return await RampClient.find_vendor(self, name)
+        return match_vendor(name, await self.list_vendors())
 
     async def hold_vendor(self, vendor_id: str, reason: str) -> HoldOutcome:
         self.holding.set()

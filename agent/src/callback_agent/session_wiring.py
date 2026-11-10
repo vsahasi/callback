@@ -96,14 +96,28 @@ TOOL_HANDLING = {"async_options": {"duplicate_reject_template": prompts.DUPLICAT
 TURN_HANDLING: TurnHandlingOptions = {
     "turn_detection": "stt",
     "endpointing": {"min_delay": 0.3},
-    "interruption": {"min_words": 2, "false_interruption_timeout": 1.0},
+    # Interruptions are decided by the local VAD, not LiveKit's cloud "adaptive" model: on the
+    # rehearsal calls that model paused the agent three times a call on handset echo (the caller's
+    # phone leaking the agent's own voice back), and each of its 100 ms polls was a network round
+    # trip. Echo is quiet and short; a real interruption lasts most of a second and has words.
+    "interruption": {
+        "mode": "vad",
+        "min_duration": 0.8,
+        "min_words": 2,
+        "false_interruption_timeout": 1.0,
+    },
     "preemptive_generation": {"enabled": False},
 }
 
 # Played while the agent is thinking (an LLM reply or a tool, the detector's checks included), so
 # the caller hears that the call is alive. LiveKit plays it only in the "thinking" state: a line the
 # agent says, and a challenge waiting for the caller's answer, are "speaking" and "listening".
-THINKING_SOUND = [AudioConfig(BuiltinAudioClip.HOLD_MUSIC, volume=0.25)]
+# The built-in clip is quiet (-22 dBFS); at 0.25 it went out at -34 dBFS, and over a narrowband
+# phone line no caller heard it. 0.8 is -24 dBFS, just under the agent's voice.
+THINKING_SOUND = [AudioConfig(BuiltinAudioClip.HOLD_MUSIC, volume=0.8)]
+# How long the music mixer waits for the next frame of the clip. Its default, 200 ms, was too short
+# for the first frame on a cold process, and the mixer put out silence for that block.
+BACKGROUND_STREAM_TIMEOUT_MS = 1000
 
 
 class Forwarding(NamedTuple):

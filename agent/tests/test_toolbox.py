@@ -29,7 +29,7 @@ from callback_agent import prompts
 from callback_agent.actions import ActionRequest
 from callback_agent.detector import DetectorError
 from callback_agent.gate import Gate, GateResult
-from callback_agent.ramp import Bill, BillVendor, RampClient, RampError, Vendor
+from callback_agent.ramp import Bill, BillVendor, RampError, Vendor, match_vendor
 from callback_agent.state import CallState
 from callback_agent.toolbox import DEFAULT_HOLD_REASON, MAX_REASON_CHARS, Toolbox
 
@@ -165,7 +165,8 @@ class ToolboxRamp(FakeRamp):
         ]
 
     async def find_vendor(self, name: str) -> Vendor | None:
-        return await RampClient.find_vendor(self, name)  # type: ignore[arg-type]
+        # The real matching, over a list_vendors call this fake records and can fail.
+        return match_vendor(name, await self.list_vendors())
 
 
 @pytest.fixture

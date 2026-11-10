@@ -25,6 +25,7 @@ from callback_agent.audio_check import BandwidthProbe
 from callback_agent.config import Settings
 from callback_agent.safelog import install_pii_filter
 from callback_agent.session_wiring import (
+    BACKGROUND_STREAM_TIMEOUT_MS,
     THINKING_SOUND,
     TOOL_HANDLING,
     TURN_HANDLING,
@@ -96,8 +97,14 @@ def bandwidth_tap(participant: rtc.RemoteParticipant) -> FrameTap:
 @server.rtc_session(agent_name=settings.agent_name)
 async def entrypoint(ctx: JobContext) -> None:
     install_pii_filter()  # again: it is safe to repeat, and it covers handlers added since prewarm
-    # Wait for the caller first, so the disclosure never plays to an empty room.
-    participant = await ctx.wait_for_participant()
+    # Wait for the caller first, so the disclosure never plays to an empty room. A room whose
+    # caller has already gone (a stale room dispatched late) ends here, as an ordinary end of
+    # a call and not a crash.
+    try:
+        participant = await ctx.wait_for_participant()
+    except RuntimeError as exc:
+        logger.info("the caller left before the agent joined: %s", exc)
+        return
     state = call_state_for(ctx.room.name, participant)
     forwarding = build_forwarding(settings)
     if forwarding is None:
@@ -105,6 +112,9 @@ async def entrypoint(ctx: JobContext) -> None:
         raise RuntimeError("DETECTOR_URL and DETECTOR_TOKEN are required, and are not set")
     detector, forwarder = forwarding
     ramp = build_ramp(settings)
+    # The vendor list is five pages in the sandbox. Fetched now, while the disclosure plays, it is
+    # there by the time the caller names a vendor; fetched on demand it was 5 s of silence.
+    ramp.prefetch_vendors()
     session = AgentSession[CallState](
         stt=deepgram.STTv2(model="flux-general-en"),
         llm=openai.LLM(model="gpt-5.6-terra"),
@@ -185,6 +195,8 @@ async def entrypoint(ctx: JobContext) -> None:
         record=False,
     )
     # Hold music while the agent thinks, on a track of its own, so a wait is never dead air.
-    background = BackgroundAudioPlayer(thinking_sound=THINKING_SOUND)
+    background = BackgroundAudioPlayer(
+        thinking_sound=THINKING_SOUND, stream_timeout_ms=BACKGROUND_STREAM_TIMEOUT_MS
+    )
     await background.start(room=ctx.room, agent_session=session)
     ctx.add_shutdown_callback(background.aclose)

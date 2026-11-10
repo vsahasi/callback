@@ -10,7 +10,8 @@ To get the answers: with `RAMP_CLIENT_ID` and `RAMP_CLIENT_SECRET` in `.env`, an
 
 1. `hold_vendor`: 204 (applied) or 202 (pending)?
 
-   Answer:
+   Answer: 204, applied. Seen on the Nov 9 rehearsal, when a denied bank change held Acme
+   Supplies (`POST /vendors/<id>/hold -> HTTP 204` in the worker log).
 
 2. The `status_summary` of Acme's bills after a vendor hold (the docs don't say).
 
@@ -22,7 +23,9 @@ To get the answers: with `RAMP_CLIENT_ID` and `RAMP_CLIENT_SECRET` in `.env`, an
 
 4. `release_vendor`: 204 or 202?
 
-   Answer:
+   Answer: applied (204). Released from a Python shell after the Nov 9 rehearsal, through
+   `RampClient.release_vendor`. Note that the sandbox has two vendors with Acme in the name,
+   `Acme Supplies` (the demo's) and `ACME` (a sandbox default), so say the full name on calls.
 
 5. `hold_bill`, then `release_bill`, on a seeded bill: does `status_summary` go to `ON_HOLD` and back?
 
@@ -34,7 +37,9 @@ To get the answers: with `RAMP_CLIENT_ID` and `RAMP_CLIENT_SECRET` in `.env`, an
    2. If the identity contains the phone number, set `hide_phone_number: true` on the dispatch rule (`agent/dispatch-rule.json`; update the live rule as under "If the laptop dies"), call again, and check the identity LiveKit assigns then. The bandwidth probe's last-four log reads the number from the participant's attributes, so with the number hidden it may lose its input.
    3. If the identity still contains the number, keep D11, and ask Eric to confirm that the detector hashes `caller_identity` before it stores it.
 
-   Answer:
+   Answer: the identity is `sip_+1<number>`, the caller's full number (Nov 9, `lk room
+   participants list` during a live call). `hide_phone_number` is not yet tried; D11 stands, and
+   Eric has been asked to confirm the hashing.
 
 ## Before any call
 
@@ -43,7 +48,7 @@ To get the answers: with `RAMP_CLIENT_ID` and `RAMP_CLIENT_SECRET` in `.env`, an
 - Run one worker per agent name. The laptop runs `callback`. Check that no other terminal or machine has a worker under that name (`pgrep -fl '[ /]agent\.py (dev|start)'` finds the ones on this laptop), because LiveKit splits jobs between two workers with the same name.
 - `DETECTOR_SCENARIO` is set per call: put the call's scenario in `.env` and restart the worker, which reads its settings only when it starts. The detector reads it only in mock mode, which is how the demo runs until the detector can listen to the room. In real mode the agent's tier 1 and 2 requests are denied with `no_audio`, and the scenario is ignored. Before a run against Eric's detector, ask Eric to run through his pre-demo list (`/healthz` is up, Twilio sends to a verified phone).
 - Check the scenario before each call. The worker logs `demo scenario for the detector: <name>` when it starts, and nothing when `DETECTOR_SCENARIO` is empty. With none set, the mock detector plays `real_cfo`, which allows the clone, the replay and the impostor. After a restart, read that line and confirm it names the call you are about to make. The detector's `v1_session_created` line also shows the `scenario` it was given.
-- The SMS code: with the detector in mock mode nothing is texted, and the only code it accepts is the mock code `424242`. That is the fallback if Twilio is down. Rehearse on the mock code `424242`, and switch to real Twilio texts (`CALLBACK_MOCK_SMS=twilio`) only for the recorded take. Twilio caps how many sends one number can get, which is error 60203. The detector turns that into `sms_failed`, which the agent treats as a deny, so the call is denied and Acme is held. A Twilio trial account also texts only verified numbers. If Eric sets `CALLBACK_MOCK_SMS=twilio`, the detector texts a real code to his phone instead.
+- The SMS code: since Nov 9 the deployed detector runs mock mode with `CALLBACK_MOCK_SMS=twilio`, so it texts a real code to the number on file and `424242` no longer works; read the digits from the text. With that setting off, nothing is texted and the only code it accepts is the mock code `424242`. That is the fallback if Twilio is down. Rehearse on the mock code `424242`, and switch to real Twilio texts (`CALLBACK_MOCK_SMS=twilio`) only for the recorded take. Twilio caps how many sends one number can get, which is error 60203. The detector turns that into `sms_failed`, which the agent treats as a deny, so the call is denied and Acme is held. A Twilio trial account also texts only verified numbers. If Eric sets `CALLBACK_MOCK_SMS=twilio`, the detector texts a real code to his phone instead.
 - No speakerphones on any call. Speaker echo puts the agent's Cartesia voice on the caller's track, and Cartesia is one of Eric's held-out deepfake tools, so a real caller could be flagged as synthetic. Use headphones or hold the phone to your ear. For the clone and the replay, play the audio into the softphone's microphone input with a virtual audio device, so it never goes through a speaker.
 - Use the browser where you can, because it costs no phone minutes. Calls 1 and 4 can't use it: call 1 has the callback, and call 4 phones in. A bank change is refused in the browser ("payment changes need a phone call"), so a bank change can't show the hold there. A read request like "what bank account does Acme have on file?" still goes through the detector, so try that in the browser for calls 2, 3 and 5. A denied browser read now holds the vendor too (a denied read holds the vendor it names), so Acme is held after it (the agent says "I can't help with that on this call. I've put that vendor's payments on hold while the team checks."), and you need the Ramp web app to release the hold before the next call.
 - The decision and the reasons are in the worker log, on the `authorize` line. On a deny, the first reason is a code from the contract: `synthetic_speech`, `automated_caller`, `challenge_failed_replay` or `speaker_mismatch` for the calls below. The score lines after it are numbers only, such as `spoof_high 0.92` and `text_flags: urgency, verification_refusal`.
