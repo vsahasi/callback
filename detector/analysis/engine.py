@@ -123,6 +123,11 @@ class AnalysisReport:
     duration_s: float = 0.0
     sample_rate: int = 0
     elapsed_ms: float = 0.0
+    #: The analysed span reduced to a `VoicePrint`: pitch register and
+    #: long-term spectrum, nothing that carries what was said. This is what
+    #: the service keeps of a span once the samples are gone, so that the
+    #: two legs of a callback can be compared without storing audio.
+    voice: VoicePrint | None = None
 
     def score(self, name: FactorName) -> float:
         for factor in self.factors:
@@ -267,6 +272,8 @@ class AnalysisEngine:
             duration_s=ctx.block.duration_s,
             sample_rate=ctx.block.sample_rate,
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
+            # Never raises; degenerate audio yields a print that says so.
+            voice=voiceprint_from(ctx),
         )
 
 

@@ -22,6 +22,17 @@ FATAL_FACTORS: frozenset[FactorName] = frozenset(
 )
 FATAL_THRESHOLD = 0.10
 
+# A `voice_match` factor whose detail opens with this is the cross-leg check
+# in `detector.legs` reporting that the person who rang in and the person who
+# answered the callback are not the same voice. That is fatal too, and for a
+# reason the blend cannot see: the callback leg is the vendor by construction,
+# so a mismatch is the impostor case even when every other signal is clean,
+# and a one-time code sent to the vendor's phone proves nothing about the
+# caller. The marker is the detail prefix rather than a new `FactorName`
+# because the wire contract is frozen by a schema snapshot, and only this
+# service writes factor details.
+SPEAKER_MISMATCH_PREFIX = "speaker_mismatch:"
+
 # When OTP step-up resolves, it carries this share of the blended score and the
 # behavioural factors are scaled to the remainder.
 OTP_WEIGHT = 0.40
@@ -74,13 +85,36 @@ def first_failing_factor(factors: list[Factor]) -> Factor | None:
     return None
 
 
+def speaker_mismatch(factors: list[Factor]) -> Factor | None:
+    """The cross-leg `voice_match` failure, if the legs were found to differ.
+
+    Only a FAIL verdict carrying the `SPEAKER_MISMATCH_PREFIX` counts. An
+    enrolment-based `voice_match` failure is not one: that case is what a
+    step-up exists for, and it keeps its challenge.
+    """
+
+    for factor in factors:
+        if (
+            factor.name is FactorName.VOICE_MATCH
+            and factor.verdict is FactorVerdict.FAIL
+            and (factor.detail or "").startswith(SPEAKER_MISMATCH_PREFIX)
+        ):
+            return factor
+    return None
+
+
 def fatal_factor(factors: list[Factor]) -> Factor | None:
-    """The first unambiguous-attack factor, if any tripped."""
+    """The first unambiguous-attack factor, if any tripped.
+
+    Two kinds: a replay or agent-behaviour signal at or below
+    `FATAL_THRESHOLD`, and a cross-leg speaker mismatch (see
+    `speaker_mismatch`).
+    """
 
     for factor in factors:
         if factor.name in FATAL_FACTORS and factor.score <= FATAL_THRESHOLD:
             return factor
-    return None
+    return speaker_mismatch(factors)
 
 
 def decide(risk_score: float, *, otp_available: bool = True) -> Decision:

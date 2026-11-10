@@ -70,6 +70,7 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from detector.config import Settings
 from detector.errors import DetectorError, SequenceConflict, SessionNotFound
+from detector.legs import LegPrint, legs_from_json, legs_to_json
 from shared.contract import (
     Decision,
     EventResponse,
@@ -205,6 +206,11 @@ class Session:
     #: speech_segments whenever a span had no uri, failed to fetch or failed
     #: to decode, which is exactly the gap a reviewer needs to see.
     spans_analysed: int = 0
+    #: One accumulated voice print per leg of the call, keyed by
+    #: `detector.legs.CALLER` / `CALLBACK`. Prints, never audio. This is what
+    #: lets the caller be compared against the person who answered the
+    #: callback; see `detector.legs`.
+    legs: dict[str, LegPrint] = field(default_factory=dict)
     max_sequence: int = -1
     factors: list[Factor] = field(default_factory=list)
     risk_score: float = 0.0
@@ -271,6 +277,7 @@ def session_to_json(session: Session) -> dict[str, Any]:
         "events_seen": session.events_seen,
         "speech_segments": session.speech_segments,
         "spans_analysed": session.spans_analysed,
+        "legs": legs_to_json(session.legs),
         "max_sequence": session.max_sequence,
         "factors": [f.model_dump(mode="json") for f in session.factors],
         "risk_score": session.risk_score,
@@ -319,6 +326,10 @@ def session_from_json(doc: dict[str, Any]) -> Session:
             # Tolerated as absent: a session written by an older replica
             # during a rolling deploy has no such key.
             spans_analysed=doc.get("spans_analysed", 0),
+            # Likewise absent from a document written before the cross-leg
+            # check existed. An empty dict means no leg has spoken yet, which
+            # leaves the check unrun: the safe direction.
+            legs=legs_from_json(doc.get("legs")),
             max_sequence=doc["max_sequence"],
             factors=[Factor.model_validate(f) for f in doc["factors"]],
             risk_score=doc["risk_score"],

@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from detector.analysis.behaviour import CallMetadata
-from detector.analysis.engine import AnalysisEngine
+from detector.analysis.engine import AnalysisEngine, AnalysisReport
 from detector.analysis.voiceprint import VoicePrint
 from detector.audio import AudioPolicy, AudioUnavailable, LoadedAudio, load_span
 from detector.config import Settings
@@ -81,6 +81,10 @@ class SpanResult:
     duration_s: float = 0.0
     bytes_read: int = 0
     elapsed_ms: float = 0.0
+    #: The span reduced to a voice print, for the cross-leg check in
+    #: `detector.legs`. The samples it was made from are gone by the time this
+    #: result exists; nothing downstream of the engine ever sees audio.
+    voice: VoicePrint | None = None
 
     @property
     def analysed(self) -> bool:
@@ -173,26 +177,27 @@ class AudioPipeline:
             return SpanResult(note=f"Audio could not be read: {type(exc).__name__}")
 
         try:
-            factors = await self._analyse(loaded, request)
+            report = await self._analyse(loaded, request)
         except Exception as exc:
             logger.exception("audio analysis raised")
             return SpanResult(note=f"Audio analysis failed: {type(exc).__name__}")
 
         elapsed = (asyncio.get_running_loop().time() - started) * 1000.0
         return SpanResult(
-            factors=factors,
+            factors=report.factors,
             source=loaded.source,
             duration_s=loaded.duration_s,
             bytes_read=loaded.bytes_read,
             elapsed_ms=round(elapsed, 2),
+            voice=report.voice,
         )
 
     async def _analyse(
         self, loaded: LoadedAudio, request: EventRequest
-    ) -> list[Factor]:
+    ) -> AnalysisReport:
         metadata = CallMetadata.from_mapping(request.metadata)
         return await asyncio.to_thread(
-            self._engine.analyse,
+            self._engine.analyse_report,
             loaded.samples,
             loaded.sample_rate,
             metadata=metadata if not metadata.is_empty else None,

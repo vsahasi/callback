@@ -25,7 +25,8 @@ import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from detector import scoring
+from detector import legs, scoring
+from detector.analysis.voiceprint import VoicePrint
 from detector.config import Settings
 from detector.errors import (
     DetectorError,
@@ -39,6 +40,7 @@ from detector.evidence import (
     NO_AUDIO_REASON,
     Evidence,
     analysed_evidence,
+    combine_factors,
     empty_evidence,
     scripted_evidence,
 )
@@ -111,6 +113,7 @@ class DetectorEngine:
         idempotency_key: str | None,
         observed_factors: list[Factor] | None = None,
         audio_note: str | None = None,
+        observed_voice: VoicePrint | None = None,
     ) -> EventResponse:
         """Apply one event and return the decision it produces.
 
@@ -118,8 +121,11 @@ class DetectorEngine:
         fetching and analysing this event's audio span. None means no span
         was analysable, which is not the same as a clean span, and mock mode
         ignores it entirely. `audio_note` says why, in words, when a span
-        produced nothing. Both are keywords with defaults so every existing
-        caller, and every mock-mode caller, is unaffected.
+        produced nothing. `observed_voice` is the same span reduced to a voice
+        print, which the session accumulates per leg so the caller can be
+        compared against whoever answered the callback (`detector.legs`).
+        All three are keywords with defaults so every existing caller, and
+        every mock-mode caller, is unaffected.
         """
 
         try:
@@ -188,7 +194,7 @@ class DetectorEngine:
                     f"session is {session.state.value} and accepts no further events"
                 )
 
-            self._apply(session, request, observed_factors, audio_note)
+            self._apply(session, request, observed_factors, audio_note, observed_voice)
 
             session.events_seen += 1
             session.max_sequence = request.sequence
@@ -246,6 +252,7 @@ class DetectorEngine:
         request: EventRequest,
         observed_factors: list[Factor] | None = None,
         audio_note: str | None = None,
+        observed_voice: VoicePrint | None = None,
     ) -> None:
         if request.claimed_user_id:
             session.claimed_user_id = request.claimed_user_id
@@ -280,6 +287,9 @@ class DetectorEngine:
                 session.speech_segments += 1
                 if observed_factors:
                     session.spans_analysed += 1
+                    observed_factors = self._with_cross_leg(
+                        session, request, observed_factors, observed_voice
+                    )
                 evidence = self._evidence_for(session, observed_factors, audio_note)
                 if session.state is SessionState.CHALLENGING:
                     # Keep analysing. Discarding speech here left the factor
@@ -344,6 +354,31 @@ class DetectorEngine:
                     session.reason = (
                         "Call ended before verification completed. Failing closed."
                     )
+
+    def _with_cross_leg(
+        self,
+        session: Session,
+        request: EventRequest,
+        observed: list[Factor],
+        voice: VoicePrint | None,
+    ) -> list[Factor]:
+        """Fold this span's voice into its leg and compare the legs.
+
+        Real mode only; mock mode never produces a print. The span's print
+        joins the leg its `track_id` names, and once both the caller and the
+        callback legs hold enough speech the two are compared. The result is
+        a `voice_match` factor merged into this span's factors, where
+        `combine_factors` keeps whichever `voice_match` scored lower: a
+        mismatch between the legs is never hidden by a matching enrolment.
+        """
+
+        if self.settings.mock_mode or voice is None or request.audio is None:
+            return observed
+        legs.absorb_span(session.legs, request.audio.track_id, voice)
+        cross = legs.cross_leg_factor(session.legs)
+        if cross is None:
+            return observed
+        return combine_factors(observed, [cross])
 
     def _evidence_for(
         self,

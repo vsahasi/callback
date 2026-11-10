@@ -44,6 +44,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from detector.mock import SCRIPTS
+from detector.scoring import speaker_mismatch
 from shared.contract import Factor, FactorName, FactorVerdict, Scenario
 
 __all__ = [
@@ -207,7 +208,10 @@ def analysed_evidence(
     if not factors:
         return empty_evidence()
 
-    rescuable = not any(
+    # A cross-leg speaker mismatch is unrescuable for the same reason the two
+    # names in UNRESCUABLE are: the code would go to the phone the real vendor
+    # is holding, which says nothing about who rang in.
+    rescuable = speaker_mismatch(factors) is None and not any(
         f.name in UNRESCUABLE and f.verdict is FactorVerdict.FAIL for f in factors
     )
     return Evidence(

@@ -48,7 +48,7 @@ from detector.analysis.cues import (
 from detector.analysis.dsp import AudioContext, pearson
 from detector.analysis.voiceprint import VoicePrint, voiceprint_from
 
-__all__ = ["analyse_voice_match"]
+__all__ = ["analyse_voice_match", "compare_prints"]
 
 MIN_VOICED_SECONDS = 0.6
 
@@ -79,7 +79,19 @@ def analyse_voice_match(
     if reference is None:
         return not_run(NO_REFERENCE)
 
-    caller = voiceprint_from(probe)
+    return compare_prints(voiceprint_from(probe), reference)
+
+
+def compare_prints(caller: VoicePrint, reference: VoicePrint) -> DetectorResult:
+    """The comparison itself, print against print.
+
+    Split out of `analyse_voice_match` so that the cross-leg check in
+    `detector.legs` can score two prints that were accumulated over a call
+    without ever holding either side's audio. Same cues, same weights, same
+    thresholds: a caller is judged against the person who answered the
+    callback exactly as they would be judged against an enrolment.
+    """
+
     if not caller.usable or not reference.usable:
         return inconclusive(
             "Voice comparison not possible: "
