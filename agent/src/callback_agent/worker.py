@@ -36,6 +36,7 @@ from callback_agent.session_wiring import (
     build_room_options,
     build_tools,
     call_state_for,
+    close_background,
     finish_call,
     log_demo_scenario,
     turn_logging_enabled,
@@ -199,4 +200,6 @@ async def entrypoint(ctx: JobContext) -> None:
         thinking_sound=THINKING_SOUND, stream_timeout_ms=BACKGROUND_STREAM_TIMEOUT_MS
     )
     await background.start(room=ctx.room, agent_session=session)
-    ctx.add_shutdown_callback(background.aclose)
+    # Not background.aclose itself: the room is already disconnected when shutdown callbacks run,
+    # and its unpublish never answers, which held every job for the 10 s kill (session_wiring).
+    ctx.add_shutdown_callback(lambda: close_background(background, ctx.room))
