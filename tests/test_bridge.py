@@ -14,6 +14,7 @@ import pytest
 
 from detector.bridge import (
     NOT_HEARD,
+    SPEAKER_MISMATCH,
     EngineSignals,
     signals_from_engine,
     signals_from_factors,
@@ -31,17 +32,34 @@ def factor(
     return Factor(name=name, score=score, weight=weight, verdict=verdict)
 
 
-class StubEngine:
-    """Enough of DetectorEngine for the bridge: factors_for, or a raise."""
+class StubCheck:
+    """A `legs.CrossLegCheck` as the bridge sees it: one flag."""
 
-    def __init__(self, factors: list[Factor] | None = None, *, raises: bool = False):
+    def __init__(self, confirmed: bool) -> None:
+        self.confirmed = confirmed
+
+
+class StubEngine:
+    """Enough of DetectorEngine for the bridge: factors_for and cross_leg_for."""
+
+    def __init__(
+        self,
+        factors: list[Factor] | None = None,
+        *,
+        raises: bool = False,
+        cross_leg: StubCheck | None = None,
+    ):
         self._factors = factors or []
         self._raises = raises
+        self._cross_leg = cross_leg
 
     def factors_for(self, session_id: str) -> object:
         if self._raises:
             raise DetectorError("session_not_found")
         return type("Answer", (), {"factors": self._factors})()
+
+    def cross_leg_for(self, session_id: str) -> object | None:
+        return self._cross_leg
 
 
 # --------------------------------------------------------------- polarity
@@ -165,3 +183,52 @@ def test_not_heard_is_a_shared_empty_value() -> None:
     assert NOT_HEARD.voiceprint is None
     assert NOT_HEARD.spoof is None
     assert NOT_HEARD.agent is None
+    assert NOT_HEARD.fatal is None
+
+
+# ------------------------------------------------- the confirmed mismatch
+
+
+def test_a_confirmed_cross_leg_mismatch_is_a_fatal_signal() -> None:
+    """The engine's own deny reaches /v1 by name, not as a low voiceprint.
+
+    The policy used to read the mismatch only as `voiceprint < 0.45`, one
+    voice fail of the two it wants, and stepped up for the very factors the
+    cross-leg check says cannot rescue the call.
+    """
+
+    engine = StubEngine(
+        [factor(FactorName.VOICE_MATCH, 0.16, FactorVerdict.FAIL)],
+        cross_leg=StubCheck(confirmed=True),
+    )
+    signals = signals_from_engine(engine, "sess-1")
+    assert signals.heard is True
+    assert signals.fatal == SPEAKER_MISMATCH == "speaker_mismatch"
+    assert signals.voiceprint == pytest.approx(0.16)
+
+
+def test_an_unconfirmed_cross_leg_check_is_not_fatal() -> None:
+    """Inconclusive, or a FAIL on thin legs: recorded, never a deny by itself."""
+
+    engine = StubEngine(
+        [factor(FactorName.SYNTHETIC_SPEECH, 0.9)],
+        cross_leg=StubCheck(confirmed=False),
+    )
+    signals = signals_from_engine(engine, "sess-1")
+    assert signals.heard is True
+    assert signals.fatal is None
+    assert signals.voiceprint is None
+
+
+def test_no_cross_leg_check_is_not_fatal() -> None:
+    engine = StubEngine([factor(FactorName.SYNTHETIC_SPEECH, 0.9)])
+    assert signals_from_engine(engine, "sess-1").fatal is None
+
+
+def test_the_fatal_signal_alone_counts_as_heard() -> None:
+    """A confirmed mismatch means both legs were measured, whatever the list says."""
+
+    signals = signals_from_factors([], speaker_mismatch=True)
+    assert signals.heard is True
+    assert signals.fatal == SPEAKER_MISMATCH
+    assert signals_from_factors([], speaker_mismatch=False) is NOT_HEARD

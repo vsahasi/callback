@@ -14,6 +14,7 @@ from callback_shared.contract import Channel, SessionCreate
 
 from detector.enrolment import InMemoryVoicePrintStore
 from detector.errors import DetectorError
+from detector.v1.policy import deny_code
 from detector.v1.service import V1Service
 from shared.contract import Factor, FactorName, FactorVerdict
 from tests.v1.conftest import FakeClock, base_settings
@@ -26,14 +27,26 @@ def factor(name: FactorName, score: float, verdict: FactorVerdict) -> Factor:
 
 
 class StubEngine:
-    def __init__(self, factors: list[Factor] | None = None, *, known: bool = True):
+    def __init__(
+        self,
+        factors: list[Factor] | None = None,
+        *,
+        known: bool = True,
+        mismatch_confirmed: bool | None = None,
+    ):
         self._factors = factors or []
         self._known = known
+        self._mismatch_confirmed = mismatch_confirmed
 
     def factors_for(self, session_id: str) -> object:
         if not self._known:
             raise DetectorError("session_not_found")
         return type("Answer", (), {"factors": self._factors})()
+
+    def cross_leg_for(self, session_id: str) -> object | None:
+        if self._mismatch_confirmed is None:
+            return None
+        return type("Check", (), {"confirmed": self._mismatch_confirmed})()
 
 
 def real_mode_service(engine: object | None) -> tuple[V1Service, FakeClock]:
@@ -126,6 +139,39 @@ def test_the_synthetic_caller_shape_reaches_the_policy() -> None:
 
     assert view.voiceprint == pytest.approx(0.78)  # the voiceprint passes
     assert view.spoof == pytest.approx(0.92)  # at or over SPOOF_HIGH 0.6
+
+
+def test_a_confirmed_cross_leg_mismatch_reaches_the_view_as_fatal() -> None:
+    """The engine's deny is bridged by name, and the policy denies on it."""
+
+    engine = StubEngine(
+        [
+            factor(FactorName.VOICE_MATCH, 0.16, FactorVerdict.FAIL),
+            factor(FactorName.SYNTHETIC_SPEECH, 0.95, FactorVerdict.PASS),
+        ],
+        mismatch_confirmed=True,
+    )
+    service, clock = real_mode_service(engine)
+    session = a_session(service, clock)
+    view = service.view(session, clock.now)
+
+    assert view.listening is True
+    assert view.fatal == "speaker_mismatch"
+    assert deny_code(view) == "speaker_mismatch"
+
+
+def test_an_unconfirmed_cross_leg_check_leaves_the_view_alone() -> None:
+    engine = StubEngine(
+        [factor(FactorName.SYNTHETIC_SPEECH, 0.95, FactorVerdict.PASS)],
+        mismatch_confirmed=False,
+    )
+    service, clock = real_mode_service(engine)
+    session = a_session(service, clock)
+    view = service.view(session, clock.now)
+
+    assert view.fatal is None
+    assert view.voiceprint is None
+    assert deny_code(view) is None
 
 
 def test_mock_mode_never_consults_the_engine() -> None:

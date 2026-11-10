@@ -205,6 +205,9 @@ class StubEngine:
             raise DetectorError("session_not_found")
         return SimpleNamespace(factors=self.factors)
 
+    def cross_leg_for(self, session_id: str) -> object | None:
+        return None  # one leg only: no cross-leg check
+
 
 def real_service(engine: object | None) -> tuple[V1Service, FakeClock]:
     clock = FakeClock()

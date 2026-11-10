@@ -9,9 +9,10 @@ Rules, first match wins:
 1. Tier 0 is always allowed, even on a locked session.
 2. A locked session denies, reasons ["session_locked", <locking code>, ...].
 3. Deny conditions, in order; the first that holds gives reasons[0] and locks
-   the session: no_audio, synthetic_speech / automated_caller,
-   challenge_failed_replay, speaker_mismatch, otp_failed, callback_denied /
-   callback_no_answer, challenges_refused.
+   the session: the engine's own fatal code (a confirmed cross-leg speaker
+   mismatch, bridged as `SessionView.fatal`), no_audio, synthetic_speech /
+   automated_caller, challenge_failed_replay, speaker_mismatch, otp_failed,
+   callback_denied / callback_no_answer, challenges_refused.
 4. Tier 1 allows on a recent digits or phrase pass after the latest /caller,
    with low spoof and agent < 0.75.
 5. Tier 1 otherwise steps up for a voice challenge.
@@ -112,6 +113,13 @@ class SessionView:
     otp_verified: bool
     otp_failed_checks: int
     callback: CallbackResult | None
+    # A deny code the /events engine has already settled on, or None. Real
+    # mode only, through detector.bridge: a confirmed cross-leg mismatch, the
+    # caller not being the voice that answered the callback. It denies ahead
+    # of every other rule but the tier 0 allow and the lock, because nothing a
+    # step-up could ask for (a code, a callback) says anything about who rang
+    # in: both would reach the phone the real vendor is holding.
+    fatal: str | None = None
 
 
 @dataclass(frozen=True)
@@ -195,6 +203,8 @@ def otp_state(view: SessionView) -> OtpState:
 def deny_code(view: SessionView) -> str | None:
     """Rule 3: the first deny condition that holds, or None."""
 
+    if view.fatal is not None:
+        return view.fatal
     if not view.mock_mode and not view.listening:
         return DenyReason.NO_AUDIO.value
     if view.spoof is not None and view.spoof >= SPOOF_HIGH:

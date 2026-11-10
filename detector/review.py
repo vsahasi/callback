@@ -118,6 +118,7 @@ from shared.contract import (
     ErrorBody,
     ErrorCode,
     ErrorResponse,
+    FactorName,
     FactorsResponse,
 )
 
@@ -388,12 +389,20 @@ def _pct(value: float) -> str:
 
 def build_factors(
     factors: list[Any],
+    *,
+    speaker_mismatch: bool = False,
 ) -> list[EvidenceFactor]:
     """Turn contract `Factor` models into reviewer-facing factors.
 
     `risk_share` is the honest version of "how much did this matter": the
     factor's weighted risk as a fraction of the total weighted risk, computed
     the same way `detector.scoring.blend_risk` computes the blend.
+
+    `speaker_mismatch` is whether the session's cross-leg check confirmed that
+    the caller is not the voice that answered the callback
+    (`Session.cross_leg.confirmed`). That is the one way `voice_match` becomes
+    fatal, and it is read from the session rather than from the factor because
+    the factor on the wire may be the enrolment comparison's.
     """
 
     scored = [f for f in factors if str(_verdict_of(f)) != "not_run"]
@@ -410,6 +419,9 @@ def build_factors(
         if weighted_total > 0 and total > 0:
             share = (weight * risk) / weighted_total
         candidate = name in {f.value for f in scoring.FATAL_FACTORS}
+        fatal = candidate and score <= scoring.FATAL_THRESHOLD
+        if speaker_mismatch and name == FactorName.VOICE_MATCH.value:
+            candidate = fatal = True
         out.append(
             EvidenceFactor(
                 name=name,
@@ -419,7 +431,7 @@ def build_factors(
                 weight=weight,
                 risk_share=min(1.0, max(0.0, share)),
                 detail=factor.detail,
-                fatal=candidate and score <= scoring.FATAL_THRESHOLD,
+                fatal=fatal,
                 fatal_candidate=candidate,
             )
         )
@@ -542,7 +554,18 @@ def explain(
         )
 
     fatal = next((f for f in factors if f.fatal), None)
-    if fatal is not None:
+    if fatal is not None and fatal.name == FactorName.VOICE_MATCH.value:
+        # Only the cross-leg check makes voice_match fatal; the 0.10 rule
+        # never applies to it, so say what actually fired.
+        lines.append(
+            f"{fatal.name} failed the cross-leg check at {fatal.score:.2f}: the "
+            "voice that rang in is not the voice that answered the callback to "
+            "the number on file. That is treated as unambiguous attack "
+            "evidence: the call is refused whatever the blended score says, and "
+            "a correct one-time code does not rescue it, because the code would "
+            "go to the phone the real vendor is holding."
+        )
+    elif fatal is not None:
         lines.append(
             f"{fatal.name} scored {fatal.score:.2f}, at or below the "
             f"{scoring.FATAL_THRESHOLD:.2f} fatal threshold. That is treated as "
@@ -823,7 +846,14 @@ class EvidenceBuilder:
             risk = float(live.risk_score)
             confidence = float(live.confidence)
             scenario = live.scenario.value if live.scenario else None
-            factors = build_factors(live.factors)
+            factors = build_factors(
+                live.factors,
+                speaker_mismatch=(
+                    stored is not None
+                    and stored.cross_leg is not None
+                    and stored.cross_leg.confirmed
+                ),
+            )
             created_at: datetime | None = live.created_at
             updated_at: datetime | None = live.updated_at
             events_seen: int | None = live.events_seen

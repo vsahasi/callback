@@ -22,6 +22,17 @@ FATAL_FACTORS: frozenset[FactorName] = frozenset(
 )
 FATAL_THRESHOLD = 0.10
 
+# A third kind of fatal signal does not live in the factor list at all. The
+# cross-leg check in `detector.legs` compares the person who rang in against
+# the person who answered the callback, and a confirmed mismatch is the
+# impostor case even when every other signal is clean: the callback leg is the
+# vendor by construction, and a one-time code sent to the vendor's phone proves
+# nothing about the caller. Its result is kept on the session
+# (`Session.cross_leg`) rather than read back out of the `voice_match` factor
+# it also emits, because that factor competes with the enrolment comparison in
+# worst-score-wins merging and an enrolment FAIL scoring lower replaces it.
+# Callers hand the confirmed mismatch, as a Factor, to `fatal_factor`.
+
 # When OTP step-up resolves, it carries this share of the blended score and the
 # behavioural factors are scaled to the remainder.
 OTP_WEIGHT = 0.40
@@ -74,13 +85,24 @@ def first_failing_factor(factors: list[Factor]) -> Factor | None:
     return None
 
 
-def fatal_factor(factors: list[Factor]) -> Factor | None:
-    """The first unambiguous-attack factor, if any tripped."""
+def fatal_factor(
+    factors: list[Factor], *, speaker_mismatch: Factor | None = None
+) -> Factor | None:
+    """The first unambiguous-attack factor, if any tripped.
+
+    Two kinds: a replay or agent-behaviour signal at or below
+    `FATAL_THRESHOLD` in `factors`, and `speaker_mismatch`, the confirmed
+    cross-leg mismatch the session holds (`CrossLegCheck.fatal_factor` in
+    `detector.legs`), which the caller passes in because it is deliberately
+    not read out of `factors`. A `voice_match` FAIL in `factors` on its own,
+    however low, is never fatal: an enrolment mismatch is what a step-up
+    exists for.
+    """
 
     for factor in factors:
         if factor.name in FATAL_FACTORS and factor.score <= FATAL_THRESHOLD:
             return factor
-    return None
+    return speaker_mismatch
 
 
 def decide(risk_score: float, *, otp_available: bool = True) -> Decision:

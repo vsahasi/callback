@@ -774,6 +774,9 @@ class V1Service:
             otp_verified=session.otp.verified,
             otp_failed_checks=session.otp.failed_checks,
             callback=session.callback.result if session.callback else None,
+            # The engine's own deny, if it has one: a confirmed cross-leg
+            # mismatch. NOT_HEARD carries None, so mock mode never sets it.
+            fatal=signals.fatal,
         )
 
     def _cached(

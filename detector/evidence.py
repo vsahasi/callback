@@ -161,7 +161,9 @@ def _confidence_for(factors: list[Factor]) -> float:
     return round(scored / total, 4)
 
 
-def _reason_for(factors: list[Factor], spans: int) -> str:
+def _reason_for(
+    factors: list[Factor], spans: int, speaker_mismatch: Factor | None = None
+) -> str:
     """One sentence a reviewer can read, built from what actually happened."""
 
     failing = [f for f in factors if f.verdict is FactorVerdict.FAIL]
@@ -170,6 +172,18 @@ def _reason_for(factors: list[Factor], spans: int) -> str:
 
     span_word = "span" if spans == 1 else "spans"
     scope = f"{len(ran)} of {len(factors)} signals over {spans} audio {span_word}"
+
+    if speaker_mismatch is not None:
+        # The cause of the decision leads, whatever else scored lower. The
+        # cross-leg factor's detail already says what was compared and why
+        # it matters; the other failures are listed after it, not instead.
+        others = [f.name.value for f in failing if f.name is not FactorName.VOICE_MATCH]
+        tail = f" Also failing: {', '.join(others)}." if others else ""
+        detail = speaker_mismatch.detail or (
+            f"voice_match failed at {speaker_mismatch.score:.2f} comparing the "
+            "caller against the voice that answered the callback"
+        )
+        return f"{detail}{tail} ({scope})"
 
     if failing:
         worst = min(failing, key=lambda f: f.score)
@@ -195,24 +209,34 @@ def analysed_evidence(
     previous: list[Factor] | None = None,
     *,
     spans: int = 1,
+    speaker_mismatch: Factor | None = None,
 ) -> Evidence:
     """Real mode. Measured factors, merged with whatever came before.
 
     `spans` is how many audio spans have now been analysed for this call. It
     only reaches the reason string, so a reviewer can tell a verdict drawn
     from one span from one drawn from four.
+
+    `speaker_mismatch` is the session's confirmed cross-leg mismatch as a
+    factor (`CrossLegCheck.fatal_factor` in `detector.legs`), or None. It is
+    passed in rather than found in `factors` because worst-score-wins merging
+    can replace the cross-leg `voice_match` with an enrolment one. When
+    present it makes the evidence unrescuable and leads the reason.
     """
 
     factors = combine_factors(list(previous or []), list(incoming))
     if not factors:
         return empty_evidence()
 
-    rescuable = not any(
+    # A confirmed cross-leg speaker mismatch is unrescuable for the same
+    # reason the two names in UNRESCUABLE are: the code would go to the phone
+    # the real vendor is holding, which says nothing about who rang in.
+    rescuable = speaker_mismatch is None and not any(
         f.name in UNRESCUABLE and f.verdict is FactorVerdict.FAIL for f in factors
     )
     return Evidence(
         factors=factors,
         confidence=_confidence_for(factors),
-        reason=_reason_for(factors, spans),
+        reason=_reason_for(factors, spans, speaker_mismatch),
         otp_can_rescue=rescuable,
     )

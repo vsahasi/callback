@@ -379,6 +379,7 @@ def create_app(
             idempotency_key=idempotency_key,
             observed_factors=span.factors,
             audio_note=span.note,
+            observed_voice=span.voice,
         )
 
         if resolved.mock_mode and not result.idempotent_replay:
