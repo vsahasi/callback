@@ -53,6 +53,7 @@ from callback_shared.contract import (
 from detector.analysis.dsp import build_context
 from detector.analysis.voiceprint import VoicePrint, combine_prints, voiceprint_from
 from detector.audio import AudioPolicy
+from detector.bridge import NOT_HEARD, EngineSignals, signals_from_engine
 from detector.config import Settings
 from detector.enrolment import VoicePrintStore, print_from_clip, storable_enrolment
 from detector.errors import DetectorError
@@ -164,10 +165,17 @@ class V1Service:
         clips: ClipSource | None = None,
         audio_policy: AudioPolicy | None = None,
         client_of: Callable[[], httpx.AsyncClient] | None = None,
+        engine: Any | None = None,
     ) -> None:
         self.settings = settings
         self.clock: Callable[[], float] = clock or time.time
         self.voiceprints = voiceprints
+        # The /events pipeline, a detector.state.DetectorEngine. Real mode
+        # takes its signals from here; see _engine_signals. Typed loosely so
+        # detector.state stays out of this module's imports. None means no
+        # bridge at all, which is every /v1 test that builds a service by hand
+        # and keeps their behaviour unchanged.
+        self.engine = engine
         # Two ways enrollment audio can arrive, and the service works with
         # either, both, or neither.
         #
@@ -582,14 +590,39 @@ class V1Service:
 
     # ------------------------------------------------------------ authorize
 
-    def listening(self, session: V1Session) -> bool:
-        """Real mode: whether the hidden listener hears this call.
+    def _engine_signals(self, session_id: str) -> EngineSignals:
+        """Signals POST /events measured for this session, mapped for policy.
 
-        Always False in Round 2: the listener is stretch work (S3), so real
-        mode denies tiers 1 and 2 with no_audio (Notion's DEGRADED rule).
+        The agent posts one speech segment per caller turn to /events under
+        the same session id /v1/sessions returned, and DetectorEngine scores
+        them. Without this bridge V1Service never reads any of it, so real
+        mode has no signals at all and every tier 1 or 2 authorize denies
+        no_audio.
+
+        Polarity: a contract Factor scores 1.0 for "fully consistent with the
+        claimed identity", so voiceprint passes through unchanged, while the
+        policy's spoof and agent are risks and get inverted.
         """
 
-        return False
+        return signals_from_engine(self.engine, session_id)
+
+    def listening(
+        self, session: V1Session, signals: EngineSignals | None = None
+    ) -> bool:
+        """Real mode: whether the detector has heard this caller at all.
+
+        The hidden listener (S3) was never built. What replaced it is the
+        agent posting each caller turn to POST /events, so this now asks
+        whether that pipeline scored anything for this session. Mock mode
+        still answers False, because its signals come from the script, and
+        real mode with nothing heard still denies tiers 1 and 2 no_audio.
+        """
+
+        if self.mock_mode:
+            return False
+        if signals is None:
+            signals = self._engine_signals(session.session_id)
+        return signals.heard
 
     def view(self, session: V1Session, now: float) -> SessionView:
         """A frozen picture of the session at `now`, for the policy."""
@@ -598,6 +631,11 @@ class V1Service:
             SCRIPTS[session.scenario]
             if self.mock_mode and session.scenario is not None
             else None
+        )
+        # Mock mode never consults the engine, so a scripted session behaves
+        # exactly as it did before this bridge existed.
+        signals = (
+            NOT_HEARD if self.mock_mode else self._engine_signals(session.session_id)
         )
         challenges = []
         for record in session.challenges.values():
@@ -622,12 +660,17 @@ class V1Service:
         return SessionView(
             session_id=session.session_id,
             mock_mode=self.mock_mode,
-            listening=self.listening(session),
+            listening=self.listening(session, signals),
             locked_code=session.locked_code,
-            # Real mode has no signals until the listener exists (stretch).
-            voiceprint=script.voiceprint if script else None,
-            spoof=(spoof_at(script.scenario, session.age_s(now)) if script else None),
-            agent=script.agent if script else None,
+            voiceprint=script.voiceprint if script else signals.voiceprint,
+            spoof=(
+                spoof_at(script.scenario, session.age_s(now))
+                if script
+                else signals.spoof
+            ),
+            agent=script.agent if script else signals.agent,
+            # No text layer on the /events path, so real mode leaves it unset,
+            # which the policy reads as "not low" rather than as safe.
             text=script.text if script else None,
             text_flags=script.text_flags if script else (),
             deepfake_windows=DEEPFAKE_WINDOWS,

@@ -270,6 +270,9 @@ def create_app(
         # call path uses, so there is one allowlist and one set of limits.
         audio_policy=audio.policy,
         client_of=audio.http,
+        # The bridge: real mode reads the signals /events measured for the
+        # session instead of the Nones it used to send the policy.
+        engine=engine,
     )
     v1: V1Service = v1_router.service  # type: ignore[attr-defined]
     app.include_router(v1_router)

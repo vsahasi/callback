@@ -84,12 +84,16 @@ def build_v1_router(
     clips: ClipSource | None = None,
     audio_policy: AudioPolicy | None = None,
     client_of: Callable[[], httpx.AsyncClient] | None = None,
+    engine: Any | None = None,
 ) -> APIRouter:
     """The /v1 routes over a fresh `V1Service`, which is `router.service`.
 
     `clips` is where enrollment audio comes from. None, which is every
     deployment today, means nothing is heard and no print is written; see
     `detector/v1/clips.py` for what the listener has to provide.
+
+    `engine` is the /events pipeline. Real mode reads its signals from there,
+    so without it every tier 1 or 2 authorize denies no_audio.
     """
 
     service = V1Service(
@@ -100,6 +104,7 @@ def build_v1_router(
         clips=clips,
         audio_policy=audio_policy,
         client_of=client_of,
+        engine=engine,
     )
 
     class V1Route(APIRoute):
