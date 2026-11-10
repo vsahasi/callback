@@ -297,8 +297,10 @@ def wire_turn_forwarding(
     the relink too). Speech that began while the agent was speaking is held: the handset's echo
     of the agent's own line trips the VAD on every call, and only the commit of the user's turn
     tells it from a barge-in. An interrupted turn releases what was held, just before the turn;
-    any other turn drops it, and the drops are counted in one log line when the session closes.
-    Once a deny has locked the call nothing more is cut either.
+    any other turn drops it, and the drops are counted in one log line when the session closes,
+    next to the count of segments that were forwarded: the forwarder logs its own counts of what
+    it posted and dropped, and the two lines count different segments. Once a deny has locked the
+    call nothing more is cut either.
     """
 
     def emit(item: Item) -> None:
@@ -321,12 +323,14 @@ def wire_turn_forwarding(
     # is attached and dropped with the call if it never is.
     held: list[AudioSegment] = []  # began over the agent: echo or a barge-in, the turn will tell
     echoes = [0]  # held segments dropped this call
+    forwarded = [0]  # segments handed to emit this call, held or not
 
     def send_segment(segment: AudioSegment) -> None:
         last_line_end = _last_agent_line_end(state, segment.start_ms)
         latency = None if last_line_end is None else segment.start_ms - last_line_end
         state.timing.reply(latency_ms=latency, duration_ms=segment.duration_ms)
         segment.metadata = state.timing.metadata()
+        forwarded[0] += 1
         emit(segment)
 
     @_guarded("forward a speech segment")
@@ -347,6 +351,7 @@ def wire_turn_forwarding(
                 # A barge-in is not a reply, so it brings no latency.
                 state.timing.reply(latency_ms=None, duration_ms=segment.duration_ms)
                 segment.metadata = state.timing.metadata()
+                forwarded[0] += 1
                 emit(segment)
         else:
             echoes[0] += len(held)
@@ -406,9 +411,13 @@ def wire_turn_forwarding(
     def on_close(ev) -> None:
         state.closing = True
         if held or echoes[0]:
+            # The forwarder's own close line counts what it posted and dropped of the segments
+            # it was given; these are the ones it never saw.
             logger.info(
-                "speech heard over the agent's own voice this call: %d segments dropped as echo",
+                "speech heard over the agent's own voice this call: %d segments dropped as echo "
+                "(%d other segments were forwarded)",
                 echoes[0] + len(held),
+                forwarded[0],
             )
             held.clear()
 
