@@ -130,6 +130,10 @@ class StrictModel(BaseModel):
 class AudioRef(StrictModel):
     """A span of call audio. Audio is referenced, never inlined in JSON."""
 
+    #: The stems `caller` and `callback` are meaningful to the detector: they
+    #: name the leg of the call a span came from, and the two legs are compared
+    #: against each other (`detector.legs`). A comment rather than the schema
+    #: description because the schema snapshot is frozen with the contract.
     track_id: str = Field(description="LiveKit track identifier.")
     start_ms: int = Field(ge=0, description="Offset from session start.")
     end_ms: int = Field(ge=0, description="Exclusive end offset from session start.")

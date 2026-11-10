@@ -366,19 +366,36 @@ class DetectorEngine:
 
         Real mode only; mock mode never produces a print. The span's print
         joins the leg its `track_id` names, and once both the caller and the
-        callback legs hold enough speech the two are compared. The result is
-        a `voice_match` factor merged into this span's factors, where
-        `combine_factors` keeps whichever `voice_match` scored lower: a
-        mismatch between the legs is never hidden by a matching enrolment.
+        callback legs hold enough speech the two are compared. The comparison
+        is kept whole on `session.cross_leg`, which is what the fatal rule
+        reads, and its `voice_match` factor is merged into this span's
+        factors, where `combine_factors` keeps whichever `voice_match` scored
+        lower: a mismatch between the legs is never hidden by a matching
+        enrolment, and `/v1` reads the lower score either way.
         """
 
         if self.settings.mock_mode or voice is None or request.audio is None:
             return observed
         legs.absorb_span(session.legs, request.audio.track_id, voice)
-        cross = legs.cross_leg_factor(session.legs)
-        if cross is None:
+        check = legs.compare_legs(session.legs)
+        if check is None:
             return observed
-        return combine_factors(observed, [cross])
+        session.cross_leg = check
+        return combine_factors(observed, [check.factor()])
+
+    def _speaker_mismatch(self, session: Session) -> Factor | None:
+        """The session's confirmed cross-leg mismatch as a factor, or None.
+
+        Read from the session's own record rather than from the factor list,
+        because an enrolment `voice_match` FAIL scoring lower replaces the
+        cross-leg factor in worst-score-wins merging. Only a confirmed
+        mismatch (FAIL, confident, both legs full: `detector.legs`) counts;
+        anything less steps up like any other failing factor.
+        """
+
+        if self.settings.mock_mode or session.cross_leg is None:
+            return None
+        return session.cross_leg.fatal_factor()
 
     def _evidence_for(
         self,
@@ -396,16 +413,23 @@ class DetectorEngine:
 
         if self.settings.mock_mode:
             return scripted_evidence(session.scenario)
+        mismatch = self._speaker_mismatch(session)
         if observed:
             return analysed_evidence(
-                observed, session.factors, spans=session.spans_analysed
+                observed,
+                session.factors,
+                spans=session.spans_analysed,
+                speaker_mismatch=mismatch,
             )
         if session.factors:
             # Nothing new, but earlier spans did produce evidence. Re-derive
             # from what is already on the session rather than throwing it
             # away, which would turn a denied call back into an unscored one.
             return analysed_evidence(
-                session.factors, None, spans=session.spans_analysed
+                session.factors,
+                None,
+                spans=session.spans_analysed,
+                speaker_mismatch=mismatch,
             )
         return empty_evidence(
             f"{NO_AUDIO_REASON} {audio_note}" if audio_note else NO_AUDIO_REASON
@@ -430,7 +454,9 @@ class DetectorEngine:
         session.confidence = evidence.confidence
         otp_available = script.otp_can_rescue and step_up
 
-        fatal = scoring.fatal_factor(factors)
+        fatal = scoring.fatal_factor(
+            factors, speaker_mismatch=self._speaker_mismatch(session)
+        )
         if fatal is not None:
             session.factors = factors
             session.risk_score = scoring.blend_risk(factors)
@@ -495,7 +521,9 @@ class DetectorEngine:
         session.factors = factors
         session.risk_score = scoring.blend_risk(factors)
 
-        fatal = scoring.fatal_factor(factors)
+        fatal = scoring.fatal_factor(
+            factors, speaker_mismatch=self._speaker_mismatch(session)
+        )
         if fatal is not None:
             session.state = SessionState.DENIED
             session.decision = Decision.DENY
@@ -574,12 +602,18 @@ class DetectorEngine:
             # used to read SCRIPTS unconditionally, so a real-mode call would
             # have been judged against whichever scenario happened to be
             # pinned to the session.
+            mismatch = self._speaker_mismatch(session)
             script = (
                 scripted_evidence(session.scenario)
                 if self.settings.mock_mode
-                else analysed_evidence(behavioural, None, spans=session.spans_analysed)
+                else analysed_evidence(
+                    behavioural,
+                    None,
+                    spans=session.spans_analysed,
+                    speaker_mismatch=mismatch,
+                )
             )
-            fatal = scoring.fatal_factor(behavioural)
+            fatal = scoring.fatal_factor(behavioural, speaker_mismatch=mismatch)
             refusal: str | None = None
             if not behavioural:
                 refusal = (

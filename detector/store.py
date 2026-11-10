@@ -70,7 +70,14 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from detector.config import Settings
 from detector.errors import DetectorError, SequenceConflict, SessionNotFound
-from detector.legs import LegPrint, legs_from_json, legs_to_json
+from detector.legs import (
+    CrossLegCheck,
+    LegPrint,
+    cross_leg_from_json,
+    cross_leg_to_json,
+    legs_from_json,
+    legs_to_json,
+)
 from shared.contract import (
     Decision,
     EventResponse,
@@ -211,6 +218,11 @@ class Session:
     #: lets the caller be compared against the person who answered the
     #: callback; see `detector.legs`.
     legs: dict[str, LegPrint] = field(default_factory=dict)
+    #: The latest comparison of those two legs, once both carry enough speech.
+    #: This record, not the `voice_match` factor it emits, is what makes a
+    #: confirmed speaker mismatch fatal: the factor can be replaced in
+    #: worst-score-wins merging, this cannot. See `detector.legs`.
+    cross_leg: CrossLegCheck | None = None
     max_sequence: int = -1
     factors: list[Factor] = field(default_factory=list)
     risk_score: float = 0.0
@@ -278,6 +290,7 @@ def session_to_json(session: Session) -> dict[str, Any]:
         "speech_segments": session.speech_segments,
         "spans_analysed": session.spans_analysed,
         "legs": legs_to_json(session.legs),
+        "cross_leg": cross_leg_to_json(session.cross_leg),
         "max_sequence": session.max_sequence,
         "factors": [f.model_dump(mode="json") for f in session.factors],
         "risk_score": session.risk_score,
@@ -330,6 +343,7 @@ def session_from_json(doc: dict[str, Any]) -> Session:
             # check existed. An empty dict means no leg has spoken yet, which
             # leaves the check unrun: the safe direction.
             legs=legs_from_json(doc.get("legs")),
+            cross_leg=cross_leg_from_json(doc.get("cross_leg")),
             max_sequence=doc["max_sequence"],
             factors=[Factor.model_validate(f) for f in doc["factors"]],
             risk_score=doc["risk_score"],

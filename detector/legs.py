@@ -22,28 +22,64 @@ are reduced to a print inside the analysis engine and dropped. The print is a
 pitch register and a long-term spectrum, which cannot reproduce what was said;
 see `detector.analysis.voiceprint` for why that shape.
 
-When the check runs
--------------------
-Only when both legs have a print and each carries at least
-`MIN_LEG_SPEECH_SECONDS` of speech. Below that the comparison would be
-tempered toward 0.5 anyway (`detector.analysis.voice` needs 0.6 s voiced on
-each side to call itself confident), and reporting a half-measured
-"inconclusive" on the heaviest factor in the model is worse than waiting one
-more span. A leg that is still short leaves `voice_match` exactly where the
-enrolment comparison left it.
+And the latest comparison of the two, as a `CrossLegCheck` on the session
+(`Session.cross_leg`): the score, the comparator's verdict and its confidence,
+and how much speech each leg carried. That record, not the factor below, is
+what `detector.scoring.fatal_factor` and `detector.evidence` read. The factor
+competes with the enrolment comparison in worst-score-wins merging, so an
+enrolment FAIL scoring lower would replace it there and a prefix on its detail
+would vanish with it. The session's own field cannot be merged away.
+
+Two gates, in seconds of speech per leg
+---------------------------------------
+`MIN_LEG_SPEECH_SECONDS` (2.0 s) is when the legs are compared at all. Below
+it the comparison would be tempered toward 0.5 anyway (`detector.analysis.voice`
+needs 0.6 s voiced on each side to call itself confident), and reporting a
+half-measured "inconclusive" on the heaviest factor in the model is worse than
+waiting one more span. A leg that is still short leaves `voice_match` exactly
+where the enrolment comparison left it.
+
+`MIN_CONFIRMED_LEG_SPEECH_SECONDS` (3.0 s) is when a mismatch may refuse the
+call. A mismatch is *confirmed*, and therefore fatal and unrescuable, only when
+the comparator said FAIL, said it was confident (its own flag, read from
+`compare_prints`, not re-derived here), and both legs carry at least this much
+speech. A FAIL that clears the first gate but not the second is still a FAIL
+on the `voice_match` factor, which steps the caller up exactly as an enrolment
+mismatch does, but it is not fatal and a correct code can still rescue it.
+
+The margin, measured
+--------------------
+On the synthetic corpus (`detector.analysis.synthetic`), 8 kHz, seeds 1 and 2
+unless stated, caller against callback, `compare_prints` thresholds pass at or
+above 0.62 and fail at or below 0.32:
+
+    132 Hz against 215 Hz (9 st apart)    0.16  FAIL  at 4, 6 and 8 s, both rates
+    same talker, +3 st, 4 s clips         0.85  PASS
+    same talker, +4 st, 4 s clips         0.3216  inconclusive  (0.0016 above the line)
+    same talker, +4 st, 6 s clips         0.3786  inconclusive; seeds 3/4: 0.2891 FAIL
+    same talker, +4.5 st, 4 s clips       0.2031  FAIL
+    same talker, +5 st, 4 s clips         0.1965  FAIL
+
+So the within-speaker margin of the comparator itself is narrow: the same
+talker four to five semitones up can already produce a confident FAIL, and the
+confirmation gate does not widen that margin. What it buys is time and a way
+out. A four-second turn carries 2.3 to 2.8 s of speech on this corpus (1.8 to
+2.6 s at 16 kHz), so one turn per leg can step the caller up but never refuse
+them; refusal needs roughly five seconds of audio on each leg, or a second
+turn, and by then the step-up has been offered. Two clearly different voices
+are confirmed as soon as the second gate is crossed, at either sample rate
+(the 2.0 s and 3.0 s gates fall on the same clip counts at 8 and 16 kHz).
 
 How it scores
 -------------
 `compare_prints`, the same function that judges a caller against an enrolled
-reference, with the same thresholds (`detector.analysis.cues`: pass at or
-above 0.62, fail at or below 0.32, inconclusive between or when either side
-is too short to be confident). The result is a `voice_match` factor, because
-that is what it is, and because the wire contract is frozen by a schema
-snapshot. A failing comparison is marked with `SPEAKER_MISMATCH_PREFIX` in its
-detail, which `detector.scoring.fatal_factor` reads as unambiguous attack
-evidence. `combine_factors` then keeps whichever `voice_match` scored lowest,
-so a cross-leg mismatch is never averaged away by a matching enrolment, and a
-mismatching enrolment is never hidden by consistent legs.
+reference, with the same thresholds (`detector.analysis.cues`). The result is
+a `voice_match` factor, because that is what it is, and because the wire
+contract is frozen by a schema snapshot. `combine_factors` then keeps
+whichever `voice_match` scored lowest, so a cross-leg mismatch is never
+averaged away by a matching enrolment, and a mismatching enrolment is never
+hidden by consistent legs. Either way `/v1` reads a voiceprint below its fail
+line through `detector.bridge` whenever the legs failed.
 """
 
 from __future__ import annotations
@@ -60,16 +96,20 @@ from detector.analysis.voiceprint import (
     voiceprint_from_json,
     voiceprint_to_json,
 )
-from detector.scoring import SPEAKER_MISMATCH_PREFIX
 from shared.contract import Factor, FactorName, FactorVerdict
 
 __all__ = [
     "CALLBACK",
     "CALLER",
+    "MIN_CONFIRMED_LEG_SPEECH_SECONDS",
     "MIN_LEG_SPEECH_SECONDS",
+    "MISMATCH_HEADLINE",
+    "CrossLegCheck",
     "LegPrint",
     "absorb_span",
-    "cross_leg_factor",
+    "compare_legs",
+    "cross_leg_from_json",
+    "cross_leg_to_json",
     "leg_of",
     "legs_from_json",
     "legs_to_json",
@@ -83,6 +123,14 @@ CALLBACK: Final = "callback"
 #: in `shared.enrolment`: the same bar an enrolment has to clear to be called
 #: good.
 MIN_LEG_SPEECH_SECONDS: Final = 2.0
+
+#: Speech both legs need before a confident FAIL may refuse the call. See
+#: "The margin, measured" in the module docstring for what this buys.
+MIN_CONFIRMED_LEG_SPEECH_SECONDS: Final = 3.0
+
+#: How a confirmed mismatch's detail opens. A label for humans, not a marker
+#: anything reads: the mechanism is `Session.cross_leg`.
+MISMATCH_HEADLINE: Final = "Cross-leg speaker mismatch"
 
 # "caller", "Caller-0", "callback:1", "CALLBACK_7". The leg name, then either
 # the end of the string or a separator. "callers" is not a leg.
@@ -163,14 +211,117 @@ def absorb_span(
     return leg
 
 
-def cross_leg_factor(legs: dict[str, LegPrint]) -> Factor | None:
+@dataclass(frozen=True)
+class CrossLegCheck:
+    """The latest comparison of the caller leg against the callback leg.
+
+    Lives on the session as `Session.cross_leg`. Everything a decision needs
+    is here in numbers, so the fatal rule reads this and never a detail
+    string: the comparator's score and verdict, whether the comparator called
+    itself confident, and how much speech each leg had when it ran.
+    """
+
+    score: float
+    verdict: FactorVerdict
+    confident: bool
+    #: The comparator's own words: the measurements behind the verdict.
+    detail: str
+    caller_seconds: float
+    caller_spans: int
+    callback_seconds: float
+    callback_spans: int
+
+    @property
+    def differ(self) -> bool:
+        """The comparator said the two legs are different voices."""
+
+        return self.verdict is FactorVerdict.FAIL
+
+    @property
+    def full(self) -> bool:
+        """Both legs cleared the confirmation gate."""
+
+        return (
+            min(self.caller_seconds, self.callback_seconds)
+            >= MIN_CONFIRMED_LEG_SPEECH_SECONDS
+        )
+
+    @property
+    def confirmed(self) -> bool:
+        """A mismatch solid enough to refuse the call on: FAIL, confident, full.
+
+        This is the only thing that makes the cross-leg check fatal and
+        unrescuable. Anything less is a step-up.
+        """
+
+        return self.differ and self.confident and self.full
+
+    @property
+    def scope(self) -> str:
+        return (
+            f"caller leg {self.caller_seconds:.1f}s of speech over "
+            f"{self.caller_spans} span{'s' if self.caller_spans != 1 else ''}, "
+            f"callback leg {self.callback_seconds:.1f}s over "
+            f"{self.callback_spans} span{'s' if self.callback_spans != 1 else ''}"
+        )
+
+    def factor(self) -> Factor:
+        """The `voice_match` factor for the risk blend.
+
+        On the 0..1 "consistent with the claimed identity" scale, with the
+        comparator's own verdict, so a mismatch that is not yet confirmed
+        still fails the factor and steps the caller up. The detail says in
+        words that this was the two legs of the call being compared, and
+        whether the mismatch was confirmed.
+        """
+
+        if self.confirmed:
+            detail = (
+                f"{MISMATCH_HEADLINE}: caller and callback legs differ. The person "
+                "who rang in is not the voice that answered the callback to the "
+                f"number on file. {self.detail} ({self.scope})"
+            )
+        elif self.differ:
+            detail = (
+                "Cross-leg check: caller and callback legs differ, but this is not "
+                "confident enough to refuse the call outright: a deny needs a "
+                "confident comparison and at least "
+                f"{MIN_CONFIRMED_LEG_SPEECH_SECONDS:.1f} s of speech on each leg. "
+                f"A step-up is required. {self.detail} ({self.scope})"
+            )
+        elif self.verdict is FactorVerdict.PASS:
+            detail = (
+                "Cross-leg check: caller and callback legs are consistent, the "
+                "voice that rang in matches the voice that answered the callback. "
+                f"{self.detail} ({self.scope})"
+            )
+        else:
+            detail = (
+                "Cross-leg check inconclusive: caller and callback legs could not "
+                f"be told apart or together with confidence. {self.detail} "
+                f"({self.scope})"
+            )
+
+        return Factor(
+            name=FactorName.VOICE_MATCH,
+            score=self.score,
+            weight=DEFAULT_WEIGHTS[FactorName.VOICE_MATCH],
+            verdict=self.verdict,
+            detail=detail[:500],
+        )
+
+    def fatal_factor(self) -> Factor | None:
+        """The factor to hand `scoring.fatal_factor`, or None if not confirmed."""
+
+        return self.factor() if self.confirmed else None
+
+
+def compare_legs(legs: dict[str, LegPrint]) -> CrossLegCheck | None:
     """Compare the caller leg against the callback leg, if both are ready.
 
-    None when either leg is missing or still too short, which leaves the
-    `voice_match` factor to the enrolment comparison. Otherwise a factor on
-    the 0..1 "consistent with the claimed identity" scale, failing at or
-    below the threshold the enrolment comparison fails at, with a detail that
-    says in words that this was the two legs of the call being compared.
+    None when either leg is missing or still under `MIN_LEG_SPEECH_SECONDS`,
+    which leaves the `voice_match` factor to the enrolment comparison and the
+    session's `cross_leg` as it was.
     """
 
     caller = legs.get(CALLER)
@@ -181,43 +332,22 @@ def cross_leg_factor(legs: dict[str, LegPrint]) -> Factor | None:
         return None
 
     result = compare_prints(caller.voice, callback.voice)
-    score = max(0.0, min(1.0, result.score))
-    verdict = result.verdict
-    scope = (
-        f"caller leg {caller.speech_seconds:.1f}s of speech over {caller.spans} "
-        f"span{'s' if caller.spans != 1 else ''}, callback leg "
-        f"{callback.speech_seconds:.1f}s over {callback.spans} "
-        f"span{'s' if callback.spans != 1 else ''}"
-    )
-
     # `verdict_for` in detector.analysis.cues: FAIL at or below
     # FAIL_AT_OR_BELOW, PASS at or above PASS_AT_OR_ABOVE, INCONCLUSIVE in
-    # between or whenever the comparison was not confident.
-    if verdict is FactorVerdict.FAIL:
-        detail = (
-            f"{SPEAKER_MISMATCH_PREFIX} caller and callback legs differ. The "
-            "person who rang in is not the voice that answered the callback to "
-            f"the number on file. {result.detail} ({scope})"
-        )
-    elif verdict is FactorVerdict.PASS:
-        detail = (
-            "Cross-leg check: caller and callback legs are consistent, the "
-            "voice that rang in matches the voice that answered the callback. "
-            f"{result.detail} ({scope})"
-        )
-    else:
+    # between or whenever the comparison was not confident. The confidence
+    # flag is the comparator's own, recorded in its measurements.
+    verdict = result.verdict
+    if verdict not in (FactorVerdict.PASS, FactorVerdict.FAIL):
         verdict = FactorVerdict.INCONCLUSIVE
-        detail = (
-            "Cross-leg check inconclusive: caller and callback legs could not "
-            f"be told apart or together with confidence. {result.detail} ({scope})"
-        )
-
-    return Factor(
-        name=FactorName.VOICE_MATCH,
-        score=score,
-        weight=DEFAULT_WEIGHTS[FactorName.VOICE_MATCH],
+    return CrossLegCheck(
+        score=max(0.0, min(1.0, float(result.score))),
         verdict=verdict,
-        detail=detail[:500],
+        confident=result.measurements.get("confident", 0.0) >= 1.0,
+        detail=result.detail,
+        caller_seconds=caller.speech_seconds,
+        caller_spans=caller.spans,
+        callback_seconds=callback.speech_seconds,
+        callback_spans=callback.spans,
     )
 
 
@@ -246,3 +376,36 @@ def legs_from_json(doc: dict[str, Any] | None) -> dict[str, LegPrint]:
         )
         for leg, entry in doc.items()
     }
+
+
+def cross_leg_to_json(check: CrossLegCheck | None) -> dict[str, Any] | None:
+    if check is None:
+        return None
+    return {
+        "score": check.score,
+        "verdict": check.verdict.value,
+        "confident": check.confident,
+        "detail": check.detail,
+        "caller_seconds": check.caller_seconds,
+        "caller_spans": check.caller_spans,
+        "callback_seconds": check.callback_seconds,
+        "callback_spans": check.callback_spans,
+    }
+
+
+def cross_leg_from_json(doc: dict[str, Any] | None) -> CrossLegCheck | None:
+    """Rebuild the check, or None for a document without one. Raises on a
+    malformed document, as `legs_from_json` does."""
+
+    if not doc:
+        return None
+    return CrossLegCheck(
+        score=float(doc["score"]),
+        verdict=FactorVerdict(doc["verdict"]),
+        confident=bool(doc["confident"]),
+        detail=str(doc["detail"]),
+        caller_seconds=float(doc["caller_seconds"]),
+        caller_spans=int(doc["caller_spans"]),
+        callback_seconds=float(doc["callback_seconds"]),
+        callback_spans=int(doc["callback_spans"]),
+    )

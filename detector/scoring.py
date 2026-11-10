@@ -22,16 +22,16 @@ FATAL_FACTORS: frozenset[FactorName] = frozenset(
 )
 FATAL_THRESHOLD = 0.10
 
-# A `voice_match` factor whose detail opens with this is the cross-leg check
-# in `detector.legs` reporting that the person who rang in and the person who
-# answered the callback are not the same voice. That is fatal too, and for a
-# reason the blend cannot see: the callback leg is the vendor by construction,
-# so a mismatch is the impostor case even when every other signal is clean,
-# and a one-time code sent to the vendor's phone proves nothing about the
-# caller. The marker is the detail prefix rather than a new `FactorName`
-# because the wire contract is frozen by a schema snapshot, and only this
-# service writes factor details.
-SPEAKER_MISMATCH_PREFIX = "speaker_mismatch:"
+# A third kind of fatal signal does not live in the factor list at all. The
+# cross-leg check in `detector.legs` compares the person who rang in against
+# the person who answered the callback, and a confirmed mismatch is the
+# impostor case even when every other signal is clean: the callback leg is the
+# vendor by construction, and a one-time code sent to the vendor's phone proves
+# nothing about the caller. Its result is kept on the session
+# (`Session.cross_leg`) rather than read back out of the `voice_match` factor
+# it also emits, because that factor competes with the enrolment comparison in
+# worst-score-wins merging and an enrolment FAIL scoring lower replaces it.
+# Callers hand the confirmed mismatch, as a Factor, to `fatal_factor`.
 
 # When OTP step-up resolves, it carries this share of the blended score and the
 # behavioural factors are scaled to the remainder.
@@ -85,36 +85,24 @@ def first_failing_factor(factors: list[Factor]) -> Factor | None:
     return None
 
 
-def speaker_mismatch(factors: list[Factor]) -> Factor | None:
-    """The cross-leg `voice_match` failure, if the legs were found to differ.
-
-    Only a FAIL verdict carrying the `SPEAKER_MISMATCH_PREFIX` counts. An
-    enrolment-based `voice_match` failure is not one: that case is what a
-    step-up exists for, and it keeps its challenge.
-    """
-
-    for factor in factors:
-        if (
-            factor.name is FactorName.VOICE_MATCH
-            and factor.verdict is FactorVerdict.FAIL
-            and (factor.detail or "").startswith(SPEAKER_MISMATCH_PREFIX)
-        ):
-            return factor
-    return None
-
-
-def fatal_factor(factors: list[Factor]) -> Factor | None:
+def fatal_factor(
+    factors: list[Factor], *, speaker_mismatch: Factor | None = None
+) -> Factor | None:
     """The first unambiguous-attack factor, if any tripped.
 
     Two kinds: a replay or agent-behaviour signal at or below
-    `FATAL_THRESHOLD`, and a cross-leg speaker mismatch (see
-    `speaker_mismatch`).
+    `FATAL_THRESHOLD` in `factors`, and `speaker_mismatch`, the confirmed
+    cross-leg mismatch the session holds (`CrossLegCheck.fatal_factor` in
+    `detector.legs`), which the caller passes in because it is deliberately
+    not read out of `factors`. A `voice_match` FAIL in `factors` on its own,
+    however low, is never fatal: an enrolment mismatch is what a step-up
+    exists for.
     """
 
     for factor in factors:
         if factor.name in FATAL_FACTORS and factor.score <= FATAL_THRESHOLD:
             return factor
-    return speaker_mismatch(factors)
+    return speaker_mismatch
 
 
 def decide(risk_score: float, *, otp_available: bool = True) -> Decision:

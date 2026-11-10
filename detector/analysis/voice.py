@@ -120,6 +120,10 @@ def compare_prints(caller: VoicePrint, reference: VoicePrint) -> DetectorResult:
     score = temper(raw_score, confident=confident)
     measurements["cues_measurable"] = float(measurable)
     measurements["score_before_tempering"] = raw_score
+    # The confidence gate `verdict_for` was given, recorded so a caller can
+    # read it rather than re-derive it. `detector.legs` refuses a call only on
+    # a FAIL that was confident here.
+    measurements["confident"] = 1.0 if confident else 0.0
 
     detail = summarise("Voice comparison:", cues)
     if not confident:
