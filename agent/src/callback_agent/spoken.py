@@ -42,6 +42,9 @@ _TENS = {
     "ninety": "9",
 }
 _REPEATS = {"double": 2, "triple": 3}
+# A number right before one of these names the code's length ("the six digit code is ...", "6-digit
+# code", "the six digits are ..."), and is not a digit of the code. _count_positions finds them.
+_LENGTH_WORDS = {"digit", "digits"}
 # Number words that parse_spoken_digits does not read but digit_tokens counts, so a number said as
 # "forty two", "thirteen" or "one hundred twenty" is seen as one. Each maps to the digits it adds.
 _BIG = {
@@ -188,13 +191,38 @@ def _is_digit(word: str) -> bool:
     return word.isdigit() or word in _DIGIT_WORDS or word in _TENS
 
 
-def _oh_positions(words: list[str]) -> set[int]:
+def _count_positions(words: list[str]) -> set[int]:
+    """Where in `words` a number names the code's length, with the "digit(s)" word after it.
+
+    The pattern is a number right before "digit" or "digits": the "six" and "digit" of "the six
+    digit code is", "6-digit code" or "the six digits are". The number is a numeral, a digit word,
+    "zero" or a tens word, with its unit word ("twenty six digit"). Nothing else is a count: the
+    "six" of "six two four two four two" or of "digit six" stays a digit, and so does the number
+    when another word comes between it and "digits" ("six um digits").
+    """
+    counts: set[int] = set()
+    for i, word in enumerate(words):
+        if word not in _LENGTH_WORDS or i == 0 or not _is_digit(words[i - 1]):
+            continue
+        counts.update((i - 1, i))
+        if words[i - 1] in _UNITS and i >= 2 and words[i - 2] in _TENS:
+            counts.add(i - 2)
+    return counts
+
+
+def _oh_positions(words: list[str], counts: set[int] = frozenset()) -> set[int]:
     """Where in `words` an "oh" or an "o" is a zero: right next to a digit, and nowhere else.
 
     The word right before it or right after it has to be a numeral, a digit word, "zero" or a tens
     word. A run of them ("oh oh seven") counts together, by the word before and the word after the
     run. So the "oh" of "Oh okay, it's 4 2 4 2 4 2" is dropped, and that of "four oh two" is not.
+    A word at a position in `counts` (see _count_positions) names the code's length and is not a
+    digit here, so the "oh" of "oh six digit code is ..." is dropped too.
     """
+
+    def is_digit_at(i: int) -> bool:
+        return 0 <= i < len(words) and i not in counts and _is_digit(words[i])
+
     zeros: set[int] = set()
     start = 0
     while start < len(words):
@@ -204,9 +232,7 @@ def _oh_positions(words: list[str]) -> set[int]:
         end = start
         while end < len(words) and words[end] in _OH_WORDS:
             end += 1
-        before = words[start - 1] if start > 0 else ""
-        after = words[end] if end < len(words) else ""
-        if _is_digit(before) or _is_digit(after):
+        if is_digit_at(start - 1) or is_digit_at(end):
             zeros.update(range(start, end))
         start = end
     return zeros
@@ -219,19 +245,27 @@ def parse_spoken_digits(text: str) -> str:
     to a digit, as in "four oh two" (402); anywhere else they are dropped, so "Oh okay, it's 4 2 4
     2 4 2" is six digits and not seven. "Double" and "triple" repeat the number right after them.
     A tens word takes the unit word right after it, so "forty two" is 42, and a tens word alone
-    gives the tens digit and 0. Everything else is dropped, and that includes the numbers that
-    are not said digit by digit: "ten", the teens ("eleven" to "nineteen") and "hundred" are not
-    parsed. Only whole words count: the "one" in "someone" and the "oh" in "john" are not digits.
-    The length is not checked here.
+    gives the tens digit and 0. A number right before "digit" or "digits" names the code's length
+    and is not a digit of the code, so "the six digit code is 1 2 3 4 5 6" and "6-digit code
+    424242" give only the code (see _count_positions); a caller who really says seven digits is
+    still heard as seven. Everything else is dropped, and that includes the numbers that are not
+    said digit by digit: "ten", the teens ("eleven" to "nineteen") and "hundred" are not parsed.
+    Only whole words count: the "one" in "someone" and the "oh" in "john" are not digits. The
+    length is not checked here.
     """
     words = _words(text)
-    ohs = _oh_positions(words)
+    counts = _count_positions(words)
+    ohs = _oh_positions(words, counts)
     digits: list[str] = []
     repeat = 1
     i = 0
     while i < len(words):
         word = words[i]
         i += 1
+        if (i - 1) in counts:
+            # "six digit code": a count, not a digit. Like any other word, it cancels "double".
+            repeat = 1
+            continue
         if word.isdigit():
             number = word
         elif word in _DIGIT_WORDS:
