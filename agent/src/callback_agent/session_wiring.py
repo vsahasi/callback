@@ -759,3 +759,45 @@ async def _close_forwarder(forwarder: Forwarder, consumer: asyncio.Task[None] | 
             await asyncio.wait({consumer}, timeout=FORWARDER_CLOSE_S)
     except Exception as exc:
         log_failure(logger, "close the forwarder", exc)
+
+
+# --- the background audio, at the job's shutdown ----------------------------------------------
+
+BACKGROUND_CLOSE_S = 1.0  # for the background audio player to stop its sounds and unpublish
+
+
+class _Closable(Protocol):
+    async def aclose(self) -> None: ...
+
+
+class _Connected(Protocol):
+    def isconnected(self) -> bool: ...
+
+
+async def close_background(background: _Closable, room: _Connected) -> None:
+    """Close the BackgroundAudioPlayer at the job's shutdown, for at most BACKGROUND_CLOSE_S.
+
+    In livekit-agents 1.8.10 the job's shutdown disconnects the room before it runs the shutdown
+    callbacks, and the room is usually gone already: every end of a call deletes it. The player's
+    aclose() ends by unpublishing its track, and on a room that is no longer connected that wait
+    never returns (the room's event task has ended, so the answer never reaches it). Registered
+    bare, the close held the job open until the worker killed the process at 10 s. What comes
+    before the unpublish (stopping the mixer and the sounds, closing the audio source) takes
+    milliseconds, so the bound only ever cuts off a step that has nothing left to unpublish from:
+    that is logged at debug. A close still running on a connected room is a warning. Never raises.
+    """
+    try:
+        async with asyncio.timeout(BACKGROUND_CLOSE_S):
+            await background.aclose()
+    except TimeoutError:
+        if room.isconnected():
+            logger.warning(
+                "the background audio was still closing after %g s, leaving it", BACKGROUND_CLOSE_S
+            )
+        else:
+            logger.debug(
+                "the background audio's track went with the room; its close is cut off after %g s",
+                BACKGROUND_CLOSE_S,
+            )
+    except Exception as exc:
+        log_failure(logger, "close the background audio", exc)
