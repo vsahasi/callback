@@ -34,7 +34,14 @@ from callback_shared.contract import (
     Turn,
 )
 from livekit import rtc
-from livekit.agents import AgentSession, JobContext, room_io
+from livekit.agents import (
+    AgentSession,
+    AudioConfig,
+    BuiltinAudioClip,
+    JobContext,
+    TurnHandlingOptions,
+    room_io,
+)
 from livekit.agents.llm import ChatMessage
 
 from callback_agent import prompts
@@ -50,6 +57,7 @@ from callback_agent.safelog import log_failure
 from callback_agent.state import CallState, SpeechInterval
 from callback_agent.stepups import CallbackLeg, StepUps
 from callback_agent.toolbox import Toolbox
+from callback_agent.transcript import Transcript
 from callback_agent.turns import (
     FinalSegment,
     Forwarder,
@@ -78,6 +86,24 @@ SESSION_CLOSE_S = 3.0  # for hang_up to wait for the session's close event, then
 # How the session words what it tells the LLM about tools it should not repeat (AgentSession's
 # tool_handling): only the text for a call turned away because the same tool is still running.
 TOOL_HANDLING = {"async_options": {"duplicate_reject_template": prompts.DUPLICATE_CALL}}
+
+# How the session takes turns (AgentSession's turn_handling). Flux decides when a turn ends, and
+# preemptive generation stays off so that no tool can fire on a half-finished turn. LiveKit then
+# waits min_delay before it commits the turn: 0.3 s, its own default for a streaming STT, instead
+# of the fixed 0.5 s, which only added silence to every turn. An interruption needs two words, so
+# a lone "okay" or "mm-hm", or line noise with no words at all, no longer stops the agent mid-
+# sentence, and a pause that turns out to be no interruption lasts 1 s before the agent resumes.
+TURN_HANDLING: TurnHandlingOptions = {
+    "turn_detection": "stt",
+    "endpointing": {"min_delay": 0.3},
+    "interruption": {"min_words": 2, "false_interruption_timeout": 1.0},
+    "preemptive_generation": {"enabled": False},
+}
+
+# Played while the agent is thinking (an LLM reply or a tool, the detector's checks included), so
+# the caller hears that the call is alive. LiveKit plays it only in the "thinking" state: a line the
+# agent says, and a challenge waiting for the caller's answer, are "speaking" and "listening".
+THINKING_SOUND = [AudioConfig(BuiltinAudioClip.HOLD_MUSIC, volume=0.25)]
 
 
 class Forwarding(NamedTuple):
@@ -229,12 +255,14 @@ def wire_turn_forwarding(
     forwarder: Forwarder | None,
     *,
     log_turns: bool = False,
+    transcript: Transcript | None = None,
 ) -> None:
     """Forward the session's turns and speech events to `forwarder`, and keep `state` up to date.
 
     Without a forwarder nothing is sent, but the state is kept and the log still works, because
     the live timing check runs before a detector exists. With `log_turns` every item that is
-    forwarded also gets one log line.
+    forwarded also gets one log line. With a `transcript`, every turn and batch of tool calls is
+    also written to it, redacted by the transcript itself.
     """
 
     def emit(item: Turn | SpeechEvent) -> None:
@@ -263,6 +291,8 @@ def wire_turn_forwarding(
             return
         if turn is not None:
             emit(turn)
+            if transcript is not None:
+                transcript.turn(turn, message.metrics)
 
     @_guarded("forward an agent state change")
     def on_agent_state(ev) -> None:
@@ -288,6 +318,8 @@ def wire_turn_forwarding(
     session.on("agent_state_changed", on_agent_state)
     session.on("user_state_changed", on_user_state)
     session.on("close", on_close)
+    if transcript is not None:
+        session.on("function_tools_executed", _guarded("write tool calls")(transcript.tools))
 
 
 def wire_risk_updates(room: rtc.Room, state: CallState) -> None:

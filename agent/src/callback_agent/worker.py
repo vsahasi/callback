@@ -11,7 +11,13 @@ import logging
 import os
 
 from livekit import rtc
-from livekit.agents import AgentServer, AgentSession, JobContext, JobProcess, TurnHandlingOptions
+from livekit.agents import (
+    AgentServer,
+    AgentSession,
+    BackgroundAudioPlayer,
+    JobContext,
+    JobProcess,
+)
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from callback_agent.agents import CallbackAgent, FrameTap
@@ -19,7 +25,9 @@ from callback_agent.audio_check import BandwidthProbe
 from callback_agent.config import Settings
 from callback_agent.safelog import install_pii_filter
 from callback_agent.session_wiring import (
+    THINKING_SOUND,
     TOOL_HANDLING,
+    TURN_HANDLING,
     RoomHangup,
     build_callback_leg,
     build_forwarding,
@@ -35,6 +43,7 @@ from callback_agent.session_wiring import (
     wire_turn_forwarding,
 )
 from callback_agent.state import CallState
+from callback_agent.transcript import open_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -98,20 +107,26 @@ async def entrypoint(ctx: JobContext) -> None:
     ramp = build_ramp(settings)
     session = AgentSession[CallState](
         stt=deepgram.STTv2(model="flux-general-en"),
-        llm=openai.LLM(model="gpt-4.1"),
+        llm=openai.LLM(model="gpt-5.6-terra"),
         tts=cartesia.TTS(model="sonic-3", voice=settings.cartesia_voice_id),
         vad=ctx.proc.userdata["vad"],
-        # Flux decides when a turn ends. Preemptive generation stays off so that no tool can fire
-        # on a half-finished turn.
-        turn_handling=TurnHandlingOptions(
-            turn_detection="stt", preemptive_generation={"enabled": False}
-        ),
+        turn_handling=TURN_HANDLING,  # Flux ends turns, nothing generated early (session_wiring)
         tool_handling=TOOL_HANDLING,
         userdata=state,
     )
+    # Off unless CALLBACK_TRANSCRIPT_DIR is set: a local, number-redacted transcript of the call.
+    transcript = open_transcript(os.environ, ctx.room.name)
+    if transcript is not None:
+        logger.info("writing a redacted transcript to %s", transcript.path)
     # Nothing goes out to the detector until identify_caller attaches a session: until then the
     # forwarder only buffers (D9). This also sets state.closing when the session closes.
-    wire_turn_forwarding(session, state, forwarder, log_turns=turn_logging_enabled(os.environ))
+    wire_turn_forwarding(
+        session,
+        state,
+        forwarder,
+        log_turns=turn_logging_enabled(os.environ),
+        transcript=transcript,
+    )
     wire_risk_updates(ctx.room, state)
     # Every request a tool makes goes through the gate. Its lines are said through tasks
     # (LiveKitVoice), the step-ups the detector asks for are real, and a deny hangs up by deleting
@@ -169,3 +184,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # Recording is fully off: transcripts hold spoken SMS codes and account numbers.
         record=False,
     )
+    # Hold music while the agent thinks, on a track of its own, so a wait is never dead air.
+    background = BackgroundAudioPlayer(thinking_sound=THINKING_SOUND)
+    await background.start(room=ctx.room, agent_session=session)
+    ctx.add_shutdown_callback(background.aclose)

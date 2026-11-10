@@ -9,7 +9,7 @@ Everything below is checked against the code. The receipts are at the bottom.
 ---
 
 Callback is two services and a contract between them. A LiveKit voice agent
-runs the call: Deepgram `flux-general-en`, GPT-4.1, Cartesia `sonic-3`,
+runs the call: Deepgram `flux-general-en`, gpt-5.6-terra, Cartesia `sonic-3`,
 Silero VAD. A FastAPI detection service judges how much to trust the caller.
 The two speak a versioned package, `callback_shared`, frozen by schema
 snapshot tests so neither side can change the wire alone.
@@ -47,7 +47,7 @@ ASVspoof instead of audio this repo generated itself.
 
 | claim | where |
 | --- | --- |
-| Deepgram `flux-general-en`, GPT-4.1, Cartesia `sonic-3`, Silero VAD | `agent/src/callback_agent/worker.py:100` |
+| Deepgram `flux-general-en`, gpt-5.6-terra, Cartesia `sonic-3`, Silero VAD | `agent/src/callback_agent/worker.py:109` |
 | three second budget, a timeout counts as deny | `AUTHORIZE_TIMEOUT_S = 3.0`, `shared/src/callback_shared/contract.py:30` |
 | the detector answers deny past 2.2 s | `AUTHORIZE_SERVER_DEADLINE_S`, same file |
 | every other path is a deny | `agent/src/callback_agent/gate.py:9` |
