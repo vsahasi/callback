@@ -1,7 +1,8 @@
 """The real model driving CallbackAgent in text mode, over a fake Toolbox.
 
-These check what the instructions in prompts.AGENT_INSTRUCTIONS actually get GPT-4.1 to do, so they
-need OPENAI_API_KEY and cost a little each run. Select them with `-m llm`; without a key they skip.
+These check what the instructions in prompts.AGENT_INSTRUCTIONS actually get gpt-5.6-terra to do, so
+they need OPENAI_API_KEY and cost a little each run. Select them with `-m llm`; without a key they
+skip.
 If a case turns out flaky, tighten AGENT_INSTRUCTIONS and never the assertion.
 """
 
@@ -31,7 +32,7 @@ DONE = "Acme Supplies now pays to the account ending 6789."
 def make_llm():
     from livekit.plugins import openai
 
-    return openai.LLM(model="gpt-4.1")  # what the worker uses
+    return openai.LLM(model="gpt-5.6-terra")  # what the worker uses
 
 
 class Exchange:

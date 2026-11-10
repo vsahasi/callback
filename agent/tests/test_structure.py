@@ -396,6 +396,31 @@ def test_the_worker_logs_the_demo_scenario_when_it_starts():
     assert '"worker_started"' in source
 
 
+def test_the_worker_prefetches_the_vendors_while_the_disclosure_plays():
+    # The sandbox has 400-odd vendors on five pages. Fetched on demand, they put 5 s of silence
+    # in front of the first tool that named a vendor; fetched when the call starts, they are
+    # there by the time the caller has heard the disclosure.
+    assert "prefetch_vendors" in called_names((SOURCE / "worker.py").read_text())
+
+
+def test_the_worker_ends_quietly_when_the_caller_leaves_before_it_joins():
+    # A stale room with no caller was dispatched alongside a real call; its wait for a participant
+    # raised RuntimeError("room disconnected ...") as an unhandled job error. It is an ordinary
+    # end of a call, not a crash.
+    tree = ast.parse((SOURCE / "worker.py").read_text())
+    waits = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and "wait_for_participant" in ast.unparse(node.body)
+        and any(
+            handler.type is not None and "RuntimeError" in ast.unparse(handler.type)
+            for handler in node.handlers
+        )
+    ]
+    assert len(waits) == 1
+
+
 def worker_session_start() -> dict[str, ast.expr]:
     """The keyword arguments of the one `session.start(...)` call in worker.py, by name."""
     starts = [

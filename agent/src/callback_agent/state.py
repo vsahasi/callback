@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from callback_shared.contract import Channel, RiskUpdate, UserSummary
 
+from callback_agent.audio_segments import CallTiming, SegmentCapture
 from callback_agent.turns import FinalSegment
 
 AGENT_SPEECH_HISTORY = 32  # how many stretches of the agent speaking a call remembers
@@ -44,6 +45,14 @@ class CallState:
     # The FINAL_TRANSCRIPTs TimedSttMixin heard that no user message has claimed yet. The session
     # wiring turns them into the user's turn when the message arrives.
     pending_segments: list[FinalSegment] = field(default_factory=list)
+    # Where TimedSttMixin puts every frame of the caller's audio, with its time on the frame clock.
+    # The session wiring sets it and cuts it into speech segments for the detector; None (a call
+    # built without the wiring) means no audio is kept. On the state, and not on an agent, so that
+    # every task's stt_node feeds the same capture.
+    audio_capture: SegmentCapture | None = None
+    # The conversation's timing so far (reply latencies, durations, barge-ins), which every speech
+    # segment carries to the detector for its agent_behaviour signal. Numbers only.
+    timing: CallTiming = field(default_factory=CallTiming)
     # The agent's recent speech, oldest first. A user turn is judged against it when its message
     # arrives: it began over the agent if its first word fell inside one of these.
     agent_speech: deque[SpeechInterval] = field(

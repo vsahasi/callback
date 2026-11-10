@@ -285,6 +285,73 @@ async def test_list_vendors_follows_page_next(ramp, vendor_pages):
     assert (first.call_count, second.call_count) == (1, 1)  # the second URL is page.next, as is
 
 
+# A client serves one call, and the sandbox has 400-odd vendors on five pages: fetching them on
+# every lookup put 5 s of silence in front of each tool. A call's lookups share one fetch.
+
+
+async def test_vendor_lookups_share_one_fetch_per_client(ramp, vendor_pages):
+    first, second = vendor_pages
+    assert await ramp.find_vendor("globex") is not None
+    assert await ramp.find_vendor("initech") is not None
+    assert await ramp.find_vendor("nobody") is None
+    assert (first.call_count, second.call_count) == (1, 1)
+
+
+async def test_prefetch_vendors_fetches_them_before_anyone_looks_one_up(ramp, vendor_pages):
+    first, second = vendor_pages
+    ramp.prefetch_vendors()
+    for _ in range(50):  # the fetch runs in the background; give it a few loop turns
+        await asyncio.sleep(0)
+        if second.call_count:
+            break
+    assert (first.call_count, second.call_count) == (1, 1)
+    assert (await ramp.find_vendor("globex")).display_name == "Globex"
+    assert (first.call_count, second.call_count) == (1, 1)  # the lookup used the fetch
+
+
+async def test_a_failed_vendor_fetch_is_not_kept(ramp, api):
+    route = api.get(FIRST_PAGE).mock(
+        side_effect=[
+            httpx.Response(404, json={"error_v2": {"message": "no"}}),
+            httpx.Response(200, json=page_of(vendor_json("Globex"))),
+        ]
+    )
+    ramp.prefetch_vendors()
+    with pytest.raises(RampError):
+        await ramp.find_vendor("globex")
+    assert (await ramp.find_vendor("globex")).name == "Globex"  # fetched again, and kept
+    assert route.call_count == 2
+
+
+async def test_a_write_forgets_the_fetched_vendors(ramp, api, vendor_pages):
+    # A script seeds, writes, and looks up again on one client. After any write the next lookup
+    # fetches the list afresh, so it never answers from before the write.
+    first, second = vendor_pages
+    api.post(f"{API}/vendors/v1/hold").respond(204)
+    await ramp.find_vendor("globex")
+    await ramp.hold_vendor("v1", "x")
+    await ramp.find_vendor("globex")
+    assert (first.call_count, second.call_count) == (2, 2)
+
+
+async def test_list_vendors_is_still_a_live_read(ramp, vendor_pages):
+    # The "list vendors" tool answers what Ramp has now, not what the call fetched at its start.
+    first, second = vendor_pages
+    await ramp.find_vendor("globex")
+    await ramp.list_vendors()
+    assert (first.call_count, second.call_count) == (2, 2)
+
+
+async def test_a_prefetch_that_nobody_awaits_fails_quietly(ramp, api, caplog):
+    api.get(FIRST_PAGE).respond(404, json={"error_v2": {"message": "no"}})
+    ramp.prefetch_vendors()
+    with caplog.at_level(logging.WARNING, logger="callback_agent.ramp"):
+        for _ in range(50):
+            await asyncio.sleep(0)
+    # The error is logged by the send, as every Ramp error is, and raised to nobody.
+    assert "404" in caplog.text
+
+
 @pytest.mark.parametrize(
     "next_url",
     [

@@ -101,6 +101,10 @@ class LiveKitCallbackLeg:
             # Fresh each time: LiveKit Cloud refuses a removed identity's token for 10 minutes.
             callee = CALLEE_PREFIX + secrets.token_hex(4)
             room = self._ctx.room
+            # A segment of the caller's speech that is still open would run on into the callee's
+            # first words: the relink is a cut, and what was open is nobody's to judge.
+            if self._state.audio_capture is not None:
+                self._state.audio_capture.discard()
             self._session.room_io.set_participant(callee)
             await self._remove_caller(room.name)
             logger.info(

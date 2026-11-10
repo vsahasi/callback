@@ -8,6 +8,7 @@ users_on_file.json
 
 # Call data
 recordings/
+transcripts/
 *.wav
 *.mp3
 *.flac

@@ -190,7 +190,7 @@ async def test_it_dials_then_talks_to_the_callee_with_the_briefs_script(attacker
 
     [session] = fakes.started
     assert session.kwargs["stt"] == ("stt", {"model": "flux-general-en"})
-    assert session.kwargs["llm"] == ("llm", {"model": "gpt-4.1"})
+    assert session.kwargs["llm"] == ("llm", {"model": "gpt-5.6-terra"})
     assert session.kwargs["tts"] == ("tts", {"model": "sonic-3", "voice": "attacker-voice"})
     assert session.kwargs["vad"] == "the-vad"
     start = session.start_kwargs

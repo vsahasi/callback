@@ -5,7 +5,9 @@ to. Captured on 2026-11-09. The cut itself is in the Plan tab in Notion and in
 `video-plan.md`; this is only the visual inventory.
 
 Three callers all open with "Hi, this is Eric Catalano". Only the third gets
-through. The screens below are what makes that legible.
+through. The screens below are what makes that legible. The detector runs in
+real mode for the recording, so every number on these screens was measured on
+the call it belongs to.
 
 ---
 
@@ -54,21 +56,25 @@ at 0.37 with it."
 The showcase and the demo calls do not agree, and the difference is visible on
 screen.
 
-| Attack | Showcase, real audio | Demo runbook, mock scenario |
+| Attack | Showcase, real audio | Demo call, real mode |
 | --- | --- | --- |
-| Replayed recording | **deny** at 0.17 | denied, `challenge_failed_replay` |
-| Synthesised clone | **challenge** at 0.35 | denied, `synthetic_speech` |
+| Replayed recording | **deny** at 0.17 | not in the cut |
+| Synthesised clone | **challenge** at 0.35 | the swap only; denied, `synthetic_speech` |
 | A different person | **challenge** at 0.37 | denied, `speaker_mismatch` |
 
-So if the video shows the clone being refused on a call at 0:00 and then cuts
-to the showcase clone tab at 0:20, a viewer sees the same attack denied once
-and only challenged once. The showcase page says so in its own headings: one
-section is literally called "Why a clone is only challenged".
+The showcase scores one clip, so the most it can do with a different person is
+challenge. The call does the same comparison across two legs: the first leg
+earns the challenge, and when the callback leg does not match it the challenge
+becomes a deny. That is an escalation, not a contradiction, and the dashboard's
+DECISIONS panel shows the same two steps.
 
-**Use the recording tab at 0:20, not the clone tab.** It is the one that
-carries the real argument, deny at a risk score below the allow line, and it
-does not contradict the call we just watched. Pairing it with the real CFO tab
-also gives the green against red contrast in two clicks on one page.
+**Use the different person tab at 0:30, then the real CFO tab.** It is the
+attack we just watched, "Putting a voice on file changes this one" is the
+right sentence to have on screen, and the two tabs give the red against green
+contrast in two clicks on one page. Do not cut to the clone tab, even if the
+clone ends up as the swap: a viewer who has just seen a refusal would read
+"Why a clone is only challenged" as the same attack denied once and only
+challenged once.
 
 ---
 
@@ -94,18 +100,26 @@ Red DENY with the reason spelled out above it and the contract codes as chips
 underneath: `voiceprint_fail 0.29<0.45`, `spoof_low 0.05`, `text_high 0.80`,
 `text_flags: urgency, verification_refusal`.
 
-The LAYERS panel is the shot for the 1:15 beat. Four named signals with bars,
-green for low and red for the failure:
+The LAYERS panel is the shot for the 0:30 beat, the impostor. Four named
+signals with bars, green for low and red for the failure:
 
-- Deepfake, LOW 0.05, "Synthetic-speech probability. High is bad."
-- Voiceprint, FAIL 0.29, "Score 0.29 against a threshold of 0.62."
-- Text Risk, HIGH 0.80, with chips for urgency and verification refusal
-- AI Caller, LOW 0.05
+- Deepfake, LOW, "Synthetic-speech probability. High is bad." Passes.
+- Voiceprint, FAIL, "Score ... against a threshold of ...". The numbers on the
+  take will be whatever the detector measured across the two legs, not the
+  0.29 and 0.62 in this fixture.
+- Text Risk, HIGH, with chips for urgency and verification refusal
+- AI Caller, LOW
 
 Nothing about the audio was synthetic and the caller still did not get
 through, which is exactly what the human impostor beat has to say. The
 DECISIONS panel underneath shows the same call going STEP-UP first and DENY
 second, so the escalation is in the same frame.
+
+The same panel is the shot for the 1:15 beat, the AI caller, with the colours
+the other way round: Deepfake HIGH, failing, and Voiceprint not the problem.
+There is no fixture for that one; capture it from the take. Two frames of the
+one panel, a different row red in each, is the whole "human versus machine"
+argument without narration.
 
 ### An allowed call, every step-up satisfied
 
@@ -127,9 +141,12 @@ CHANNEL field reads Phone.
 - **SAMPLE DATA**, orange, top right. It is in both screenshots above because
   fixtures mode is the only way to run the dashboard without a live detector.
   It must not be in the video.
-- **MOCK DETECTOR** renders instead when the detector is reachable and in mock
-  mode, which is how every demo call runs. Leave that one in frame. It does
-  the same honest work as the 0:20 line, for free.
+- **MOCK DETECTOR** renders when the detector is reachable and answering from
+  a script. It must not be in the video either. In real mode nothing renders
+  there but the green **LIVE** indicator (`web/src/components/Dashboard.tsx`,
+  the chip is gated on `mock_mode`). If MOCK DETECTOR is on screen, the
+  detector is not measuring the call and the take is the fallback, not the
+  recording.
 - The rail reads "CALLS" with "FOLLOWING LATEST" in green, and switches to
   "PINNED" the moment you click into an older call, which also drops a "This
   is an older call. Jump to the newest" bar across the top. Film the newest
@@ -149,8 +166,9 @@ The only screen that proves anything moved. Acme Supplies is the vendor.
 - Vendor **hold** after a denied call, with the two open bills at `ON_HOLD` if
   the hold is pending approval rather than applied.
 
-Show the hold once, after the human impostor, rather than after both denials.
-Twice is repetitive and costs fifteen seconds the cut does not have.
+Show the hold once, after the second refusal (the AI caller), rather than
+after both denials. Twice is repetitive and costs fifteen seconds the cut does
+not have.
 
 ## 4. The worker log
 
@@ -158,14 +176,18 @@ Plain terminal, and the most convincing screen for a technical judge because
 nothing about it can be staged.
 
 - The `authorize` line carries the decision and the reasons. The first reason
-  is a contract code: `synthetic_speech` for the clone, `speaker_mismatch` for
-  the impostor, `automated_caller` for the attacker agent.
+  is a contract code: `speaker_mismatch` for the impostor, `synthetic_speech`
+  or `automated_caller` for the attacker agent (either can come first), and
+  `synthetic_speech` for the clone if the swap runs.
 - Score lines follow, numbers only, such as `spoof_high 0.92`.
 - Text layer flags read like `text_flags: urgency, verification_refusal`,
-  which is the screen to use when we talk about the impostor pushing back on
-  the callback.
-- At startup it logs `demo scenario for the detector:` and the name. Keep this
-  one out of frame, since it shows the scenario was set by hand.
+  which is the screen to use when we talk about the impostor pushing on the
+  payment run.
+- In real mode the worker logs nothing about a scenario at startup. If a
+  `demo scenario for the detector:` line is in the log, the mock fallback is
+  on, and the take is not real detection. The first `authorize` line of a
+  call must not say `no_audio` either; that means the detector never saw the
+  agent's audio.
 
 ## 5. The phone itself
 
@@ -174,6 +196,10 @@ Film it directly, not through screen capture.
 - The real SMS arriving with the six digit code.
 - The call dropping, then ringing again from the Telnyx number. This is the
   single most persuasive shot in the video and it needs no UI at all.
+- On the impostor call, both of those land on Eric's phone while Veer is the
+  one talking: the code goes to the number on file, and so does the callback.
+  Film Eric's phone there too, because the mismatch is between the person
+  holding it and the person who called.
 
 ## 6. The live risk stream, unconfirmed
 

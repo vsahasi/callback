@@ -11,7 +11,13 @@ import logging
 import os
 
 from livekit import rtc
-from livekit.agents import AgentServer, AgentSession, JobContext, JobProcess, TurnHandlingOptions
+from livekit.agents import (
+    AgentServer,
+    AgentSession,
+    BackgroundAudioPlayer,
+    JobContext,
+    JobProcess,
+)
 from livekit.plugins import cartesia, deepgram, openai, silero
 
 from callback_agent.agents import CallbackAgent, FrameTap
@@ -19,7 +25,10 @@ from callback_agent.audio_check import BandwidthProbe
 from callback_agent.config import Settings
 from callback_agent.safelog import install_pii_filter
 from callback_agent.session_wiring import (
+    BACKGROUND_STREAM_TIMEOUT_MS,
+    THINKING_SOUND,
     TOOL_HANDLING,
+    TURN_HANDLING,
     RoomHangup,
     build_callback_leg,
     build_forwarding,
@@ -27,6 +36,7 @@ from callback_agent.session_wiring import (
     build_room_options,
     build_tools,
     call_state_for,
+    close_background,
     finish_call,
     log_demo_scenario,
     turn_logging_enabled,
@@ -35,6 +45,7 @@ from callback_agent.session_wiring import (
     wire_turn_forwarding,
 )
 from callback_agent.state import CallState
+from callback_agent.transcript import open_transcript
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +98,14 @@ def bandwidth_tap(participant: rtc.RemoteParticipant) -> FrameTap:
 @server.rtc_session(agent_name=settings.agent_name)
 async def entrypoint(ctx: JobContext) -> None:
     install_pii_filter()  # again: it is safe to repeat, and it covers handlers added since prewarm
-    # Wait for the caller first, so the disclosure never plays to an empty room.
-    participant = await ctx.wait_for_participant()
+    # Wait for the caller first, so the disclosure never plays to an empty room. A room whose
+    # caller has already gone (a stale room dispatched late) ends here, as an ordinary end of
+    # a call and not a crash.
+    try:
+        participant = await ctx.wait_for_participant()
+    except RuntimeError as exc:
+        logger.info("the caller left before the agent joined: %s", exc)
+        return
     state = call_state_for(ctx.room.name, participant)
     forwarding = build_forwarding(settings)
     if forwarding is None:
@@ -96,22 +113,31 @@ async def entrypoint(ctx: JobContext) -> None:
         raise RuntimeError("DETECTOR_URL and DETECTOR_TOKEN are required, and are not set")
     detector, forwarder = forwarding
     ramp = build_ramp(settings)
+    # The vendor list is five pages in the sandbox. Fetched now, while the disclosure plays, it is
+    # there by the time the caller names a vendor; fetched on demand it was 5 s of silence.
+    ramp.prefetch_vendors()
     session = AgentSession[CallState](
         stt=deepgram.STTv2(model="flux-general-en"),
-        llm=openai.LLM(model="gpt-4.1"),
+        llm=openai.LLM(model="gpt-5.6-terra"),
         tts=cartesia.TTS(model="sonic-3", voice=settings.cartesia_voice_id),
         vad=ctx.proc.userdata["vad"],
-        # Flux decides when a turn ends. Preemptive generation stays off so that no tool can fire
-        # on a half-finished turn.
-        turn_handling=TurnHandlingOptions(
-            turn_detection="stt", preemptive_generation={"enabled": False}
-        ),
+        turn_handling=TURN_HANDLING,  # Flux ends turns, nothing generated early (session_wiring)
         tool_handling=TOOL_HANDLING,
         userdata=state,
     )
+    # Off unless CALLBACK_TRANSCRIPT_DIR is set: a local, number-redacted transcript of the call.
+    transcript = open_transcript(os.environ, ctx.room.name)
+    if transcript is not None:
+        logger.info("writing a redacted transcript to %s", transcript.path)
     # Nothing goes out to the detector until identify_caller attaches a session: until then the
     # forwarder only buffers (D9). This also sets state.closing when the session closes.
-    wire_turn_forwarding(session, state, forwarder, log_turns=turn_logging_enabled(os.environ))
+    wire_turn_forwarding(
+        session,
+        state,
+        forwarder,
+        log_turns=turn_logging_enabled(os.environ),
+        transcript=transcript,
+    )
     wire_risk_updates(ctx.room, state)
     # Every request a tool makes goes through the gate. Its lines are said through tasks
     # (LiveKitVoice), the step-ups the detector asks for are real, and a deny hangs up by deleting
@@ -169,3 +195,11 @@ async def entrypoint(ctx: JobContext) -> None:
         # Recording is fully off: transcripts hold spoken SMS codes and account numbers.
         record=False,
     )
+    # Hold music while the agent thinks, on a track of its own, so a wait is never dead air.
+    background = BackgroundAudioPlayer(
+        thinking_sound=THINKING_SOUND, stream_timeout_ms=BACKGROUND_STREAM_TIMEOUT_MS
+    )
+    await background.start(room=ctx.room, agent_session=session)
+    # Not background.aclose itself: the room is already disconnected when shutdown callbacks run,
+    # and its unpublish never answers, which held every job for the 10 s kill (session_wiring).
+    ctx.add_shutdown_callback(lambda: close_background(background, ctx.room))

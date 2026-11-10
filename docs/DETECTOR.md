@@ -129,8 +129,18 @@ allowed, and new challenges, codes and enrollments are refused with 409
 `session_locked`. A decision never ends a session; `/end`, 30 minutes or 10
 idle minutes do. At most 5 sessions are live at once.
 
-Real mode has no listener in Round 2, so tier 1 and 2 requests deny with
-`no_audio` and challenges fail with `no_audio`.
+In real mode the voice signals come from the audio the agent posts to
+`POST /events` under the same session id (`detector/bridge.py`). A `digits`,
+`phrase` or `liveness` challenge binds to the first `user` turn after issue
+that is an attempt at the answer: at least six spoken tokens, or two of the
+expected ones (a stray "okay" or "one moment" leaves it pending). Whether the
+words were right is recorded as a bool at that moment, never the words. 700 ms
+later the challenge settles from that bool and the signals measured by then:
+words wrong fails `phrase_mismatch`; words right with `voice_match` under 0.45
+fails `speaker_mismatch`; otherwise it passes with the voiceprint as
+`speaker_score`. Nothing heard keeps `no_audio`, which is not a voice fail. A
+settled result never changes. Until a span has been analysed, tier 1 and 2
+requests deny with `no_audio` and challenges fail with `no_audio`.
 
 ### What is never logged
 

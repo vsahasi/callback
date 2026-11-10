@@ -13,6 +13,7 @@ from livekit.agents.types import NOT_GIVEN
 from livekit.agents.utils import is_given
 
 from callback_agent import prompts
+from callback_agent.audio_segments import SegmentCapture
 from callback_agent.gate import CallControl
 from callback_agent.safelog import log_failure
 from callback_agent.toolbox import Toolbox
@@ -42,6 +43,8 @@ class _SttClock:
         # The offset on the final that caused the last switch. The connection that final came on
         # follows it; the next connection is judged against framework_offset again.
         self.switched_at: float | None = None
+        # Seconds of audio this call has seen: where the next frame starts on the anchor's clock.
+        self.heard_s = 0.0
 
 
 def _current_stream() -> Any | None:
@@ -142,8 +145,10 @@ class TimedSttMixin:
     LiveKit shares one STT stream across a handoff only when both agents use the default node, so
     an agent without the mixin would run its stretch of the call untapped.
 
-    The frame tap feeds the HD-voice probe. The same pass places each FINAL_TRANSCRIPT in epoch
-    time. Flux word times exist only inside stt_node (the session's events carry plain text), so the
+    The frame tap feeds the HD-voice probe. The same pass gives every frame, with its start on the
+    anchor's clock, to the call's audio capture (CallState.audio_capture, which the session wiring
+    cuts into speech segments for the detector), and places each FINAL_TRANSCRIPT in epoch time.
+    Flux word times exist only inside stt_node (the session's events carry plain text), so the
     mixin turns every final into a FinalSegment on the call's CallState, where the session wiring
     picks it up when the user's message arrives. The LiveKit notes (Q3) explain the rule.
 
@@ -202,12 +207,16 @@ class TimedSttMixin:
 
         async def tapped() -> AsyncIterator[rtc.AudioFrame]:
             first = True
+            capture: SegmentCapture | None = None
             async for frame in audio:
                 if first:
                     first = False
                     self._anchor(clock, frame)
                     self._read_offset(clock)
+                    capture = self._capture()
                 self._tap(frame)
+                if capture is not None:
+                    capture = self._feed(capture, clock, frame)
                 yield frame
 
         async with aclosing(Agent.default.stt_node(self, tapped(), model_settings)) as events:
@@ -224,6 +233,35 @@ class TimedSttMixin:
             # The tap sits in the audio path. If it breaks, give it up rather than deafen the call.
             logger.exception("frame tap failed, dropping it so the audio keeps flowing")
             self._frame_tap = None
+
+    def _capture(self) -> SegmentCapture | None:
+        """The call's audio capture, read once per stt_node call. None if there is none."""
+        try:
+            return self.session.userdata.audio_capture
+        except Exception as exc:
+            log_failure(logger, "find the call's audio capture, so this stretch is not heard", exc)
+            return None
+
+    def _feed(
+        self, capture: SegmentCapture, clock: _SttClock, frame: rtc.AudioFrame
+    ) -> SegmentCapture | None:
+        """Give the capture one frame, with its start on the anchor's clock.
+
+        A frame starts where the audio heard before it ended, so the time is the anchor plus the
+        audio heard so far, whatever the wall clock says: the same clock the turns' words are on.
+        Returns the capture to keep feeding, or None once it has failed: it sits in the audio
+        path, and a capture that breaks is given up rather than deafen the call.
+        """
+        try:
+            duration = frame.duration
+            t0 = clock.anchor.t0
+            start_s = (wall_clock() - duration) if t0 is None else t0 + clock.heard_s
+            clock.heard_s += duration
+            capture.add_frame(frame, start_s)
+            return capture
+        except Exception as exc:
+            log_failure(logger, "keep a frame of the caller's audio, giving the capture up", exc)
+            return None
 
     def _anchor(self, clock: _SttClock, first_frame: rtc.AudioFrame) -> None:
         try:
