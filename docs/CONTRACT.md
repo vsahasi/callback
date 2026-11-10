@@ -189,6 +189,19 @@ any non-terminal ──TTL exceeded──> expired               (terminal, fail
 Once a session is terminal, any event other than `session_end` gets `409`
 `session_terminal`. A call that just stops, without a decision, is denied.
 
+Real mode has one exception. There `/v1` decides and reads this engine's
+factors through `detector/bridge.py`, so an `allowed` session keeps accepting
+`speech_segment` for as long as it lives: each span is analysed and merged
+worst-of into the factors, the envelope stays `allow` while they stay clean,
+and a later span with a fatal or failing signal moves the session to `denied`, which is terminal; a span whose signals are merely inconclusive leaves the allow standing with the factors brought up to date, so the callback leg is still heard. That is what
+lets the callback leg of a call, posted under the same session id a few minutes
+after the first turn, be heard at all. A `denied` session refuses in both modes.
+
+The TTL (`CALLBACK_SESSION_TTL_SECONDS`, default 900) runs from the first
+`/events` post for the session and has to cover the caller leg, the hang-up,
+the dial and the callback leg together. Past it, `/events` answers `409` and
+`/factors` keeps reporting what was measured until the record is evicted.
+
 That includes expiry: once a session passes its TTL, `/events` answers `409`
 `session_terminal` rather than reporting the expiry in a 200 body. To see why a
 session ended, read `/factors`, which reports `state: "expired"` and

@@ -34,7 +34,8 @@ Optional overrides, same secret or env:
     CALLBACK_MOCK_MODE                 default "true" here
     CALLBACK_OTP_MAX_ATTEMPTS          default 3
     CALLBACK_OTP_TTL_SECONDS           default 120
-    CALLBACK_SESSION_TTL_SECONDS       default 300
+    CALLBACK_SESSION_TTL_SECONDS       default 900: the whole call, caller
+                                       leg and callback leg, under one id
     CALLBACK_MOCK_JITTER_MIN_MS        default 150
     CALLBACK_MOCK_JITTER_MAX_MS        default 400
 

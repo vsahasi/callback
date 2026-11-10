@@ -11,6 +11,12 @@ expiry, a spent OTP attempt, an exhausted challenge). `SessionStore.update()`
 commits on the way out of those raises, so a session that has been denied stays
 denied no matter which replica handled the event. Read the `detector.store`
 module docstring for the guarantee each backend actually provides.
+
+Two modes, one difference in lifecycle. In mock mode the engine's decision is
+the verdict the dev API publishes, and a terminal session refuses every event
+but `session_end`. In real mode `/v1` decides and reads the engine's factors
+through `detector.bridge`, so an allowed session keeps hearing speech for as
+long as it lives: see `DetectorEngine._still_hears`.
 """
 
 from __future__ import annotations
@@ -177,7 +183,7 @@ class DetectorEngine:
                     f"accepted sequence {session.max_sequence}"
                 )
 
-            if session.state.is_terminal and request.event is not EventType.SESSION_END:
+            if session.state.is_terminal and not self._still_hears(session, request):
                 raise SessionTerminal(
                     f"session is {session.state.value} and accepts no further events"
                 )
@@ -204,6 +210,35 @@ class DetectorEngine:
         )
 
     # ------------------------------------------------------------ transitions
+
+    def _still_hears(self, session: Session, request: EventRequest) -> bool:
+        """Whether a terminal session still takes this event.
+
+        `session_end` always, so a call that is over can say so. And in real
+        mode, speech on a session the engine has allowed. The voice agent
+        posts one segment per caller turn for the whole call, hangs up, dials
+        the number on file and posts the callback leg under the same id, while
+        `/v1 .../authorize` reads `factors_for` through `detector.bridge` and
+        decides. With the default two segments before a decision, an allow
+        that closed the session refused every later turn with 409, so the
+        callback leg was never analysed and the factors `/v1` read were frozen
+        at the second span. In real mode the engine's allow is evidence, not
+        the verdict, so the evidence keeps coming in: factors keep merging
+        worst-of, and a later fatal span flips the session to deny.
+
+        Mock mode is unchanged: its allow is the published dev-API verdict,
+        and the integration kit expects a terminal session to refuse. A denied
+        session refuses in both modes, because nothing it could hear would
+        lift the deny.
+        """
+
+        if request.event is EventType.SESSION_END:
+            return True
+        return (
+            not self.settings.mock_mode
+            and session.state is SessionState.ALLOWED
+            and request.event is EventType.SPEECH_SEGMENT
+        )
 
     def _apply(
         self,
@@ -252,6 +287,14 @@ class DetectorEngine:
                     # session whose voice was never examined. A fatal signal
                     # arriving now still denies outright.
                     self._record_evidence(session, evidence)
+                    return
+                if session.state is SessionState.ALLOWED:
+                    # Real mode only; _still_hears refused this in mock mode.
+                    # The allow has been published, so there is no step-up to
+                    # offer: a span that would have asked for a code now
+                    # denies instead, and a clean one leaves the allow
+                    # standing with the factors brought up to date.
+                    self._evaluate(session, evidence, step_up=False)
                     return
                 if (
                     session.speech_segments
@@ -333,10 +376,24 @@ class DetectorEngine:
             f"{NO_AUDIO_REASON} {audio_note}" if audio_note else NO_AUDIO_REASON
         )
 
-    def _evaluate(self, session: Session, evidence: Evidence) -> None:
+    def _evaluate(
+        self, session: Session, evidence: Evidence, *, step_up: bool = True
+    ) -> None:
+        """Turn the evidence into a decision and move the session.
+
+        `step_up=False` is the re-evaluation of a session that has already
+        allowed. A code cannot be requested after the agent has heard
+        complete_allow, so a failing signal falls closed to deny, the way
+        `scoring.decide` already treats an exhausted OTP. The middle band with
+        nothing failing is different: it is not attack evidence, and a deny
+        here is terminal, so the callback leg and anything after it would go
+        unheard. The allow stands, with the factors brought up to date.
+        """
+
         script = evidence
         factors = evidence.factors
         session.confidence = evidence.confidence
+        otp_available = script.otp_can_rescue and step_up
 
         fatal = scoring.fatal_factor(factors)
         if fatal is not None:
@@ -352,7 +409,7 @@ class DetectorEngine:
             return
 
         risk = scoring.blend_risk(factors)
-        decision = scoring.decide(risk, otp_available=script.otp_can_rescue)
+        decision = scoring.decide(risk, otp_available=otp_available)
 
         # A failing signal is never waved through on a good average. Weights
         # are renormalised over whichever detectors produced a score, so one
@@ -360,7 +417,16 @@ class DetectorEngine:
         # around it. Step up where that is possible, refuse where it is not.
         failing = scoring.first_failing_factor(factors)
         if decision is Decision.ALLOW and failing is not None:
-            decision = Decision.CHALLENGE if script.otp_can_rescue else Decision.DENY
+            decision = Decision.CHALLENGE if otp_available else Decision.DENY
+        if (
+            not step_up
+            and failing is None
+            and decision is Decision.DENY
+            and risk < scoring.DENY_AT_OR_ABOVE
+        ):
+            decision = (
+                Decision.ALLOW
+            )  # the middle band after an allow: see the docstring
 
         session.factors = factors
         session.risk_score = risk

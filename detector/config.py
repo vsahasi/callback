@@ -178,7 +178,12 @@ class Settings:
             api_token_generated=generated,
             review_token=review,
             mock_mode=_env_bool("CALLBACK_MOCK_MODE", True),
-            session_ttl_seconds=_env_int("CALLBACK_SESSION_TTL_SECONDS", 300),
+            # Measured from the first /events post. A real call is 2 to 4
+            # minutes of caller turns, a hang-up, a dial to the number on
+            # file and 2 to 4 more turns on the callback leg, all under one
+            # session id. 300 refused the callback leg of a long call with
+            # 409; 900 covers the call with room for a slow dial.
+            session_ttl_seconds=_env_int("CALLBACK_SESSION_TTL_SECONDS", 900),
             otp_max_attempts=_env_int("CALLBACK_OTP_MAX_ATTEMPTS", 3),
             otp_ttl_seconds=_env_int("CALLBACK_OTP_TTL_SECONDS", 120),
             mock_jitter_min_ms=jitter_min,
