@@ -8,8 +8,9 @@ whether it failed).
 The session itself is never recorded (worker.py starts it with record=False), because callers say
 SMS codes and bank numbers. This keeps to that: every number in a turn is redacted to [NUM], with
 no exemption, so even the answer to a secret ask, which reaches the detector with its digits, is
-[NUM] here. A tool call is written without its arguments or its output. A write that fails is
-logged and dropped, and never reaches the call.
+[NUM] here. A tool call is written without its arguments or its output. A segment of the caller's
+audio sent to the detector is written as its leg and its times, never its sound. A write that
+fails is logged and dropped, and never reaches the call.
 """
 
 import json
@@ -23,6 +24,7 @@ from typing import Any
 from callback_shared.contract import Turn
 from livekit.agents.voice.events import FunctionToolsExecutedEvent
 
+from callback_agent.audio_segments import AudioSegment
 from callback_agent.redact import redact_turn
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,18 @@ class Transcript:
                 "interrupted": redacted.interrupted,
                 "text": redacted.text,
                 "latency_ms": latency,
+            }
+        )
+
+    def segment(self, segment: AudioSegment) -> None:
+        """Note that a segment of the caller's speech was captured: its leg and times, no audio."""
+        self._write(
+            {
+                "kind": "audio_segment",
+                "leg": segment.track_id,
+                "start_ms": segment.start_ms,
+                "end_ms": segment.end_ms,
+                "duration_ms": segment.duration_ms,
             }
         )
 

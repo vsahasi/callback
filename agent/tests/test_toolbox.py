@@ -147,10 +147,12 @@ class FakeForwarder:
         self._state = state
         self.attached: list[str] = []
         self.state_then: list[str | None] = []
+        self.claimed: list[str | None] = []  # the claimed user id each attach named
 
-    def attach(self, session_id: str) -> None:
+    def attach(self, session_id: str, claimed_user_id: str | None = None) -> None:
         self.attached.append(session_id)
         self.state_then.append(self._state.session_id)
+        self.claimed.append(claimed_user_id)
 
 
 class ToolboxRamp(FakeRamp):
@@ -232,6 +234,7 @@ async def test_identify_creates_session_and_flushes_buffer(toolbox, state, detec
         )
     ]
     assert forwarder.attached == ["s1"] and state.session_id == "s1"
+    assert forwarder.claimed == ["eric"]  # the audio posts name the claimed user for voice match
     assert state.claimed_user == ERIC
     assert reply == prompts.IDENTIFIED.format(name="Eric Catalano")
 

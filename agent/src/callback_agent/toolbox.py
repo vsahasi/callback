@@ -139,7 +139,8 @@ class Toolbox:
             state.session_id = created.session_id
             state.detector_down = False
             if self._forwarder is not None:
-                self._forwarder.attach(created.session_id)
+                # The user id goes with the audio: the detector matches the voice to that user's.
+                self._forwarder.attach(created.session_id, claimed_user_id=user.user_id)
             logger.info("identify_caller: identified, session %s", created.session_id)
             return prompts.IDENTIFIED.format(name=user.display_name)
 

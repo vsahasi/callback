@@ -17,11 +17,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import aiohttp
+import numpy as np
 import pytest
 from callback_shared.contract import Channel
 from google.protobuf import json_format
-from livekit import api
+from livekit import api, rtc
 
+from callback_agent.audio_segments import SegmentCapture
 from callback_agent.callback_leg import CallbackLegError, LiveKitCallbackLeg
 from callback_agent.config import Settings
 from callback_agent.state import CallState
@@ -241,6 +243,20 @@ async def test_an_answer_clears_the_user_turn_then_points_the_state_at_the_calle
     ]
     assert state.caller_identity == callee and state.channel is Channel.PHONE
     assert session.room_io.linked == callee
+
+
+async def test_the_relink_discards_the_segment_of_the_callers_speech_that_was_open(leg, state):
+    # The caller was mid-sentence when the leg relinked. Nothing of that stretch goes anywhere,
+    # and nothing the callee says lands in a segment that began on the caller.
+    heard = []
+    state.audio_capture = SegmentCapture(sink=heard.append)
+    state.audio_capture.begin(1000.0, track_id="caller")
+    for k in range(50):
+        pcm = np.zeros(480, dtype=np.int16)
+        state.audio_capture.add_frame(rtc.AudioFrame(pcm.tobytes(), 24000, 1, 480), 1000 + k / 50)
+    assert state.audio_capture.open
+    await leg.dial_and_link(NUMBER_ON_FILE)
+    assert not state.audio_capture.open and heard == []
 
 
 async def test_an_answer_drops_the_callers_leftover_transcript_segments(leg, state):

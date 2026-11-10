@@ -19,11 +19,18 @@ from dataclasses import dataclass
 
 from callback_shared.contract import Role, SpeechEvent, SpeechEventType, Turn, Word
 
+from callback_agent.audio_segments import AudioSegment
 from callback_agent.detector import DetectorClient, DetectorError
 
 logger = logging.getLogger(__name__)
 
 RETRY_DELAY_S = 0.2  # a post that fails is tried once more after this long, then dropped
+# How much of the caller's audio waits in the buffer for a session. Older segments go first, and
+# the count of what went is logged when the forwarder closes. 60 s is a minute of speech at the
+# start of a call, before identify_caller: more than any caller says before giving a name.
+MAX_BUFFERED_AUDIO_S = 60.0
+
+Item = Turn | SpeechEvent | AudioSegment
 
 
 def _epoch_ms(epoch_s: float) -> int:
@@ -116,29 +123,45 @@ def speech_event(kind: SpeechEventType, created_at_s: float) -> SpeechEvent:
     return SpeechEvent(type=kind, ts_ms=_epoch_ms(created_at_s))
 
 
-def _describe(item: Turn | SpeechEvent) -> str:
-    """What an item is, for a log line: its kind and time, never its text."""
+def _describe(item: Item) -> str:
+    """What an item is, for a log line: its kind and time, never its text or its sound."""
     if isinstance(item, Turn):
         return f"{item.role.value} turn at {item.start_ms} ms"
+    if isinstance(item, AudioSegment):
+        return str(item)
     return f"{item.type.value} event at {item.ts_ms} ms"
 
 
 class Forwarder:
-    """Sends finished turns and speech events to the detector without ever holding up the call.
+    """Sends finished turns, speech events and speech segments to the detector without ever
+    holding up the call.
 
     submit() only appends to a bounded buffer, so any event handler can call it: it never blocks and
     never raises, whatever state the detector is in. One background task, run(), posts the buffered
     items one at a time, in the order they were submitted. Nothing goes out before attach(): the
     detector's session exists only once the caller is identified (D9), so earlier items wait in the
-    buffer and are flushed then. A full buffer drops its oldest item.
+    buffer and are flushed then. A full buffer drops its oldest item, and the buffer holds at most
+    MAX_BUFFERED_AUDIO_S of audio, dropping the oldest segments first.
+
+    Audio fails quietly. The deployed detector may refuse /events (mock mode, a session it does not
+    know), and that would repeat on every segment, so the first refusal of a call is one WARNING
+    with the status and the rest are counted; the counts are logged once, when the forwarder
+    closes. A segment is never retried: a refusal is deterministic, and the next segment is a
+    better use of the time. The turns' retry stays as it was.
     """
 
     def __init__(self, detector: DetectorClient, *, max_buffer: int = 200) -> None:
         if max_buffer < 1:
             raise ValueError("max_buffer must be at least 1")
         self._detector = detector
-        self._buffer: deque[Turn | SpeechEvent] = deque(maxlen=max_buffer)
+        self._buffer: deque[Item] = deque(maxlen=max_buffer)
         self._session_id: str | None = None
+        self._claimed_user_id: str | None = None
+        self._audio_sequence = 0  # /events wants a strictly increasing sequence per session
+        self._audio_posted = 0
+        self._audio_failed = 0
+        self._audio_dropped = 0  # unsent: over the budget, or still buffered at close
+        self._audio_warned = False
         self._closed = False
         self._wake = asyncio.Event()  # rung when run() may have work to do, or has to stop
         self._idle = asyncio.Event()  # set while nothing is buffered and nothing is being posted
@@ -146,20 +169,39 @@ class Forwarder:
         self._stopped = asyncio.Event()  # set while run() is not running
         self._stopped.set()
 
-    def attach(self, session_id: str) -> None:
-        """Name the detector's session. The buffered items go out, then every later one."""
+    def attach(self, session_id: str, claimed_user_id: str | None = None) -> None:
+        """Name the detector's session, and the user the caller claims to be, which goes with
+        every speech segment. The buffered items go out, then every later one."""
         self._session_id = session_id
+        self._claimed_user_id = claimed_user_id
         self._wake.set()
 
-    def submit(self, item: Turn | SpeechEvent) -> None:
+    def submit(self, item: Item) -> None:
         """Queue an item for the detector. Never blocks, never raises."""
         if self._closed:
             return
         if len(self._buffer) == self._buffer.maxlen:
-            logger.warning("forwarder buffer is full: dropping the %s", _describe(self._buffer[0]))
+            oldest = self._buffer[0]
+            logger.warning("forwarder buffer is full: dropping the %s", _describe(oldest))
+            if isinstance(oldest, AudioSegment):
+                self._audio_dropped += 1
         self._buffer.append(item)
+        if isinstance(item, AudioSegment):
+            self._keep_audio_within_budget()
         self._idle.clear()
         self._wake.set()
+
+    def _keep_audio_within_budget(self) -> None:
+        """Drop the oldest buffered segments until at most MAX_BUFFERED_AUDIO_S of audio waits."""
+        budget_ms = MAX_BUFFERED_AUDIO_S * 1000
+        audio = [i for i in self._buffer if isinstance(i, AudioSegment)]
+        held_ms = sum(s.duration_ms for s in audio)
+        for oldest in audio:
+            if held_ms <= budget_ms or len(audio) == 1:
+                break
+            self._buffer.remove(oldest)
+            held_ms -= oldest.duration_ms
+            self._audio_dropped += 1
 
     async def run(self) -> None:
         """The single consumer: start it once, as a task, with the call. It ends at aclose()."""
@@ -200,13 +242,24 @@ class Forwarder:
         longer called, so it is safe to close it.
         """
         self._closed = True
+        self._audio_dropped += sum(isinstance(i, AudioSegment) for i in self._buffer)
         self._buffer.clear()
         self._idle.set()
         self._wake.set()
         await self._stopped.wait()
+        if self._audio_posted or self._audio_failed or self._audio_dropped:
+            logger.info(
+                "speech segments this call: %d posted, %d refused or failed, %d dropped unsent",
+                self._audio_posted,
+                self._audio_failed,
+                self._audio_dropped,
+            )
 
-    async def _deliver(self, session_id: str, item: Turn | SpeechEvent) -> None:
+    async def _deliver(self, session_id: str, item: Item) -> None:
         """Post one item. A DetectorError earns one more try after RETRY_DELAY_S, then a drop."""
+        if isinstance(item, AudioSegment):
+            await self._deliver_audio(session_id, item)
+            return
         what = _describe(item)
         for attempt in (1, 2):
             try:
@@ -225,3 +278,27 @@ class Forwarder:
                 # A bug rather than an outage, so a second try would fail the same way.
                 logger.exception("dropping the %s after an unexpected error", what)
                 return
+
+    async def _deliver_audio(self, session_id: str, segment: AudioSegment) -> None:
+        """Post one speech segment, once. The first failure of the call is logged, the rest
+        counted. The sequence counts every attempt, so the detector never sees one twice."""
+        sequence = self._audio_sequence
+        self._audio_sequence += 1
+        try:
+            await self._detector.post_speech_segment(
+                session_id, segment, sequence=sequence, claimed_user_id=self._claimed_user_id
+            )
+        except Exception as exc:
+            self._audio_failed += 1
+            if not self._audio_warned:
+                self._audio_warned = True
+                # A DetectorError names the call and the status, never the body. Anything else is
+                # a bug: its type is enough, as its message could say what was being handled.
+                why = str(exc) if isinstance(exc, DetectorError) else type(exc).__name__
+                logger.warning(
+                    "%s refused by the detector (%s); the call goes on, later refusals are counted",
+                    _describe(segment),
+                    why,
+                )
+            return
+        self._audio_posted += 1
