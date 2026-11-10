@@ -64,8 +64,10 @@ from detector.v1.challenges import (
     MAX_CHALLENGES_PER_SESSION,
     VERIFICATION_KINDS,
     ChallengeRecord,
+    answers,
     make_say,
     new_challenge_id,
+    words_match,
 )
 from detector.v1.clips import ClipSource
 from detector.v1.enrollments import (
@@ -96,6 +98,7 @@ from detector.v1.errors import (
 from detector.v1.logsafe import tag
 from detector.v1.otp import OtpBackend, otp_backend_from_settings
 from detector.v1.policy import (
+    VOICEPRINT_FAIL,
     ChallengeView,
     SessionView,
     Verdict,
@@ -314,7 +317,7 @@ class V1Service:
             session.turns.popitem(last=False)
         if turn.role is not Role.USER:
             return
-        answered = self._on_user_turn(session, received_at)
+        answered = self._on_user_turn(session, received_at, turn)
         if answered is not None:
             # Awaited rather than left to run loose, so the clip is measured
             # before this request answers 204. A challenge resolves 700 ms
@@ -324,9 +327,16 @@ class V1Service:
             await self._measure_enroll_clip(session, answered, turn)
 
     def _on_user_turn(
-        self, session: V1Session, received_at: float
+        self, session: V1Session, received_at: float, turn: Turn
     ) -> ChallengeRecord | None:
-        """Bind this turn to the open challenge, and return it."""
+        """Bind this turn to the open challenge, and return it.
+
+        A verification challenge binds only to a turn that is an attempt at
+        the answer (`answers`): a stray "okay" between the prompt and the
+        answer would otherwise be the answer, fail `phrase_mismatch`, and deny
+        and lock the caller. An enroll prompt binds the first user turn, as
+        before: its text is not an answer, its clip is the point.
+        """
 
         # Only the current challenge can be pending: a new one supersedes it.
         if session.current_challenge_id is None:
@@ -334,7 +344,17 @@ class V1Service:
         current = session.challenges.get(session.current_challenge_id)
         if current is None:
             return None
-        current.note_user_turn(received_at)
+        verifying = current.kind in VERIFICATION_KINDS
+        if (
+            verifying
+            and current.answered_at is None
+            and not answers(current.expected, turn.text)
+        ):
+            return None  # not an attempt: the challenge keeps waiting
+        if current.note_user_turn(received_at) and verifying:
+            # Decided now, while the text is in hand, and kept as a bool: the
+            # record never holds the caller's words.
+            current.words_right = words_match(current.expected, turn.text)
         return current
 
     async def _measure_enroll_clip(
@@ -446,8 +466,72 @@ class V1Service:
     def _outcome_for(self, session: V1Session, kind: ChallengeKind) -> ChallengeOutcome:
         if self.mock_mode and session.scenario is not None:
             return challenge_outcome(session.scenario, kind)
-        # Real mode, Round 2: no listener, so nothing can be heard.
+        # Real mode: nothing heard yet. A verification challenge is settled
+        # from the /events signals when it resolves (`_settle`); an enroll
+        # prompt passes only once its own clip is measured.
         return NO_AUDIO_OUTCOME
+
+    def _settle(
+        self,
+        session: V1Session,
+        record: ChallengeRecord,
+        now: float,
+        signals: EngineSignals | None = None,
+    ) -> None:
+        """Real mode: fix a verification challenge's outcome as it resolves.
+
+        Runs before every read of the record. Nothing happens until the bound
+        turn's 700 ms have passed, and nothing happens twice: once fixed, later
+        evidence cannot turn the result the agent read into another.
+
+        `signals` is what the caller already read from the engine for this
+        request; None reads it here. The result is fixed only once the read
+        succeeded: a store that cannot answer leaves the challenge pending, so
+        a hiccup does not freeze it as no_audio, until the challenge's own
+        expiry, where it fails closed as no_audio rather than wait forever.
+        """
+
+        if not record.due_to_settle(now):
+            return
+        if signals is None:
+            try:
+                signals = self._engine_signals(session.session_id)
+            except Exception as exc:  # noqa: BLE001 - a store hiccup, not a result
+                self.log(
+                    "v1_challenge_evidence_unavailable",
+                    level="warning",
+                    session_id=session.session_id,
+                    challenge_id=record.challenge_id,
+                    error=type(exc).__name__,
+                )
+                if now < record.expires_at:
+                    return  # still pending; the next read tries again
+                signals = NOT_HEARD
+        record.outcome_fixed = True
+        if not signals.heard:
+            return  # NO_AUDIO_OUTCOME stays: not a voice fail (ruling F1)
+        speaker = signals.voiceprint
+        if not record.words_right:
+            outcome = ChallengeOutcome(
+                ChallengeState.FAILED, False, speaker, "phrase_mismatch"
+            )
+        elif speaker is not None and speaker < VOICEPRINT_FAIL:
+            outcome = ChallengeOutcome(
+                ChallengeState.FAILED, True, speaker, "speaker_mismatch"
+            )
+        else:
+            outcome = ChallengeOutcome(ChallengeState.PASSED, True, speaker, None)
+        record.outcome = outcome
+        # Codes and a score: never the words.
+        self.log(
+            "v1_challenge_settled",
+            session_id=session.session_id,
+            challenge_id=record.challenge_id,
+            status=outcome.status.value,
+            phrase_match=outcome.phrase_match,
+            speaker_score=None if speaker is None else round(speaker, 3),
+            reason=outcome.reason,
+        )
 
     def _enroll_prompt(self, session: V1Session, now: float) -> int:
         """The prompt number the next enroll challenge asks."""
@@ -468,12 +552,16 @@ class V1Service:
         )
         if session.current_challenge_id is not None:
             current = session.challenges.get(session.current_challenge_id)
-            if current is not None and current.supersede(now):
-                self.log(
-                    "v1_challenge_superseded",
-                    session_id=session.session_id,
-                    challenge_id=current.challenge_id,
-                )
+            if current is not None:
+                # An answered challenge past its 700 ms is a result, not a
+                # pending one, even if the agent never polled it.
+                self._settle(session, current, now)
+                if current.supersede(now):
+                    self.log(
+                        "v1_challenge_superseded",
+                        session_id=session.session_id,
+                        challenge_id=current.challenge_id,
+                    )
         say, expected = make_say(kind, enroll_prompt=enroll_prompt)
         record = ChallengeRecord(
             challenge_id=new_challenge_id(),
@@ -484,6 +572,7 @@ class V1Service:
             expected=expected,
             bind=session.pending_bind if kind in VERIFICATION_KINDS else None,
             enroll_prompt=enroll_prompt,
+            awaits_evidence=not self.mock_mode and kind in VERIFICATION_KINDS,
         )
         session.challenges[record.challenge_id] = record
         session.current_challenge_id = record.challenge_id
@@ -508,7 +597,9 @@ class V1Service:
         record = session.challenges.get(challenge_id)
         if record is None:
             raise ChallengeNotFound()
-        return record.resolve(self.registry.now()).wire()
+        now = self.registry.now()
+        self._settle(session, record, now)
+        return record.resolve(now).wire()
 
     # ----------------------------------------------------------------- OTP
 
@@ -633,7 +724,9 @@ class V1Service:
             else None
         )
         # Mock mode never consults the engine, so a scripted session behaves
-        # exactly as it did before this bridge existed.
+        # exactly as it did before this bridge existed. Real mode reads it
+        # once per request, for the challenges and the view alike: each read
+        # is a store round trip inside the authorize deadline.
         signals = (
             NOT_HEARD if self.mock_mode else self._engine_signals(session.session_id)
         )
@@ -641,6 +734,7 @@ class V1Service:
         for record in session.challenges.values():
             if record.kind not in VERIFICATION_KINDS:
                 continue
+            self._settle(session, record, now, signals)
             state = record.resolve(now)
             challenges.append(
                 ChallengeView(
