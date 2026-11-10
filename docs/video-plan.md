@@ -44,7 +44,11 @@ Cut to the Layers panel and hold on two rows:
 
 The voiceprint matched and the deepfake check did not. A low average cannot
 save a call when one signal fails outright, and that is the reason this is not
-just a voiceprint. Then the showcase page for where the numbers come from.
+just a voiceprint. Then the showcase page for where the numbers come from, on
+the recording tab and not the clone tab. The showcase scores real audio and
+only challenges a clone, so cutting to that tab would contradict the call we
+just watched. The recording tab denies at 0.17, below the allow line, which is
+the same argument. See `video-ui-shots.md`.
 
 Say the limit here, in one line: the scoring runs on real audio, the live
 acoustic path is not wired to the room yet, so this demo scripts the signal.
