@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import numpy as np
 import pytest
 import respx
 from callback_shared.contract import (
@@ -47,6 +48,7 @@ from callback_shared.contract import (
     Word,
 )
 
+from callback_agent.audio_segments import AudioSegment, speech_segment_body
 from callback_agent.detector import DetectorClient, DetectorError, fail_closed_decision
 
 BASE = "https://detector.test"
@@ -106,6 +108,13 @@ STEP_UP = {  # the spec's Decision example, trimmed
     "agent_say": "For security, I'll text a code to the number we have on file.",
     "ttl_s": 120,
 }
+SEGMENT = AudioSegment(
+    track_id="caller",
+    start_ms=1_700_000_000_000,
+    end_ms=1_700_000_001_000,
+    samples=np.full(24000, 1000, dtype=np.int16),
+    sample_rate_hz=24000,
+)
 USERS = [
     dict(user_id="u-eric", display_name="Eric Catalano", role="CFO", phone_last_four="0123"),
     dict(user_id="u-erin", display_name="Erin Cole", role="Controller", phone_last_four="0145"),
@@ -160,6 +169,15 @@ CASES = [
         "/v1/sessions/s1/events",
         EVENT.model_dump(mode="json"),
         None,
+        None,
+    ),
+    Case(
+        "post_speech_segment",
+        lambda c: c.post_speech_segment("s1", SEGMENT, sequence=2, claimed_user_id="u-eric"),
+        "POST",
+        "/events",  # the detector's audio intake, not a /v1 route
+        speech_segment_body("s1", SEGMENT, sequence=2, claimed_user_id="u-eric"),
+        None,  # the detector answers a decision envelope, which the agent does not read
         None,
     ),
     Case(

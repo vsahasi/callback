@@ -29,16 +29,28 @@ from callback_shared.contract import (
     Channel,
     RiskUpdate,
     Role,
-    SpeechEvent,
     SpeechEventType,
     Turn,
 )
 from livekit import rtc
-from livekit.agents import AgentSession, JobContext, room_io
+from livekit.agents import (
+    AgentSession,
+    AudioConfig,
+    BuiltinAudioClip,
+    JobContext,
+    TurnHandlingOptions,
+    room_io,
+)
 from livekit.agents.llm import ChatMessage
 
 from callback_agent import prompts
-from callback_agent.callback_leg import LiveKitCallbackLeg
+from callback_agent.audio_segments import (
+    TRACK_CALLBACK,
+    TRACK_CALLER,
+    AudioSegment,
+    SegmentCapture,
+)
+from callback_agent.callback_leg import CALLEE_PREFIX, LiveKitCallbackLeg
 from callback_agent.capture import LiveKitVoice
 from callback_agent.config import Settings
 from callback_agent.detector import DetectorClient, DetectorError
@@ -50,9 +62,11 @@ from callback_agent.safelog import log_failure
 from callback_agent.state import CallState, SpeechInterval
 from callback_agent.stepups import CallbackLeg, StepUps
 from callback_agent.toolbox import Toolbox
+from callback_agent.transcript import Transcript
 from callback_agent.turns import (
     FinalSegment,
     Forwarder,
+    Item,
     build_agent_turn,
     build_user_turn,
     speech_event,
@@ -78,6 +92,38 @@ SESSION_CLOSE_S = 3.0  # for hang_up to wait for the session's close event, then
 # How the session words what it tells the LLM about tools it should not repeat (AgentSession's
 # tool_handling): only the text for a call turned away because the same tool is still running.
 TOOL_HANDLING = {"async_options": {"duplicate_reject_template": prompts.DUPLICATE_CALL}}
+
+# How the session takes turns (AgentSession's turn_handling). Flux decides when a turn ends, and
+# preemptive generation stays off so that no tool can fire on a half-finished turn. LiveKit then
+# waits min_delay before it commits the turn: 0.3 s, its own default for a streaming STT, instead
+# of the fixed 0.5 s, which only added silence to every turn. An interruption needs two words, so
+# a lone "okay" or "mm-hm", or line noise with no words at all, no longer stops the agent mid-
+# sentence, and a pause that turns out to be no interruption lasts 1 s before the agent resumes.
+TURN_HANDLING: TurnHandlingOptions = {
+    "turn_detection": "stt",
+    "endpointing": {"min_delay": 0.3},
+    # Interruptions are decided by the local VAD, not LiveKit's cloud "adaptive" model: on the
+    # rehearsal calls that model paused the agent three times a call on handset echo (the caller's
+    # phone leaking the agent's own voice back), and each of its 100 ms polls was a network round
+    # trip. Echo is quiet and short; a real interruption lasts most of a second and has words.
+    "interruption": {
+        "mode": "vad",
+        "min_duration": 0.8,
+        "min_words": 2,
+        "false_interruption_timeout": 1.0,
+    },
+    "preemptive_generation": {"enabled": False},
+}
+
+# Played while the agent is thinking (an LLM reply or a tool, the detector's checks included), so
+# the caller hears that the call is alive. LiveKit plays it only in the "thinking" state: a line the
+# agent says, and a challenge waiting for the caller's answer, are "speaking" and "listening".
+# The built-in clip is quiet (-22 dBFS); at 0.25 it went out at -34 dBFS, and over a narrowband
+# phone line no caller heard it. 0.8 is -24 dBFS, just under the agent's voice.
+THINKING_SOUND = [AudioConfig(BuiltinAudioClip.HOLD_MUSIC, volume=0.8)]
+# How long the music mixer waits for the next frame of the clip. Its default, 200 ms, was too short
+# for the first frame on a cold process, and the mixer put out silence for that block.
+BACKGROUND_STREAM_TIMEOUT_MS = 1000
 
 
 class Forwarding(NamedTuple):
@@ -229,15 +275,33 @@ def wire_turn_forwarding(
     forwarder: Forwarder | None,
     *,
     log_turns: bool = False,
+    transcript: Transcript | None = None,
 ) -> None:
-    """Forward the session's turns and speech events to `forwarder`, and keep `state` up to date.
+    """Forward the session's turns, speech events and speech segments to `forwarder`, and keep
+    `state` up to date.
 
     Without a forwarder nothing is sent, but the state is kept and the log still works, because
     the live timing check runs before a detector exists. With `log_turns` every item that is
-    forwarded also gets one log line.
+    forwarded also gets one log line. With a `transcript`, every turn and batch of tool calls is
+    also written to it, redacted by the transcript itself, and every speech segment as its leg
+    and times.
+
+    The caller's audio: this puts a SegmentCapture on `state`, which TimedSttMixin feeds with
+    every frame, and cuts it at the user's state changes (speaking opens a segment, leaving it
+    closes one) and at the commit of the user's turn, which closes one that is still open. A
+    segment is stamped, as it is cut, with the leg it was heard on ('caller' or 'callback') and
+    the call's timing so far (CallTiming), and goes out through the forwarder like a turn.
+
+    Two kinds of stretch are not the caller's to judge and are not sent. While a callback is
+    dialed nothing is cut, and a segment still open then is discarded (the leg discards it at
+    the relink too). Speech that began while the agent was speaking is held: the handset's echo
+    of the agent's own line trips the VAD on every call, and only the commit of the user's turn
+    tells it from a barge-in. An interrupted turn releases what was held, just before the turn;
+    any other turn drops it, and the drops are counted in one log line when the session closes.
+    Once a deny has locked the call nothing more is cut either.
     """
 
-    def emit(item: Turn | SpeechEvent) -> None:
+    def emit(item: Item) -> None:
         if isinstance(item, Turn):
             # No full bank number leaves the agent. Only the caller's first turn after a secret
             # ask keeps its 4 to 6 digit runs, and that turn uses the exemption up.
@@ -247,8 +311,49 @@ def wire_turn_forwarding(
                 state.answer_exempt = False
         if log_turns:
             logger.info(_describe(item))
+        if isinstance(item, AudioSegment) and transcript is not None:
+            transcript.segment(item)
         if forwarder is not None:
             forwarder.submit(item)
+
+    # The caller's audio. TimedSttMixin feeds every frame to this; the speech events below cut it.
+    # A finished segment goes out through emit, like a turn, and so is buffered until the session
+    # is attached and dropped with the call if it never is.
+    held: list[AudioSegment] = []  # began over the agent: echo or a barge-in, the turn will tell
+    echoes = [0]  # held segments dropped this call
+
+    def send_segment(segment: AudioSegment) -> None:
+        last_line_end = _last_agent_line_end(state, segment.start_ms)
+        latency = None if last_line_end is None else segment.start_ms - last_line_end
+        state.timing.reply(latency_ms=latency, duration_ms=segment.duration_ms)
+        segment.metadata = state.timing.metadata()
+        emit(segment)
+
+    @_guarded("forward a speech segment")
+    def on_segment(segment: AudioSegment) -> None:
+        segment.track_id = _leg(state)  # the leg it ended on, not the one it began on
+        if any(speech.covers(segment.start_ms) for speech in state.agent_speech):
+            held.append(segment)
+            return
+        send_segment(segment)
+
+    def settle_held(turn: Turn | None) -> None:
+        """The user's turn is in: what began over the agent was a barge-in, or echo."""
+        if not held:
+            return
+        if turn is not None and turn.interrupted:
+            state.timing.barge_in()
+            for segment in held:
+                # A barge-in is not a reply, so it brings no latency.
+                state.timing.reply(latency_ms=None, duration_ms=segment.duration_ms)
+                segment.metadata = state.timing.metadata()
+                emit(segment)
+        else:
+            echoes[0] += len(held)
+        held.clear()
+
+    capture = SegmentCapture(sink=on_segment)
+    state.audio_capture = capture
 
     @_guarded("forward a conversation item")
     def on_item_added(ev) -> None:
@@ -256,13 +361,19 @@ def wire_turn_forwarding(
         if not isinstance(message, ChatMessage):
             return  # an agent handoff marker
         if message.role == "user":
+            # The turn is committed, so the caller's speech is over, if the state change that says
+            # so has not closed the segment already. It goes out ahead of the turn it belongs to.
+            capture.end(ev.created_at)
             turn = _user_turn(state, message)
+            settle_held(turn)
         elif message.role == "assistant":
             turn = _agent_turn(message, ev.created_at)
         else:
             return
         if turn is not None:
             emit(turn)
+            if transcript is not None:
+                transcript.turn(turn, message.metrics)
 
     @_guarded("forward an agent state change")
     def on_agent_state(ev) -> None:
@@ -279,15 +390,34 @@ def wire_turn_forwarding(
     def on_user_state(ev) -> None:
         if ev.new_state == "speaking":
             emit(speech_event(SpeechEventType.USER_SPEECH_START, ev.created_at))
+            if state.callback_in_progress:
+                # The stream carries a silence frame and the callee's first instants, nobody's
+                # voice to judge: nothing opens until the leg has answered, and a segment the
+                # caller left open dies here if the relink did not end it already.
+                capture.discard()
+            elif not state.locked:
+                capture.begin(ev.created_at, track_id=_leg(state))
+        elif ev.old_state == "speaking":
+            # With Flux ending turns, this is its end of turn (or the VAD's), and the end of the
+            # caller's speech. The contract has no event for it, but the segment ends here.
+            capture.end(ev.created_at)
 
     @_guarded("note that the session closed")
     def on_close(ev) -> None:
         state.closing = True
+        if held or echoes[0]:
+            logger.info(
+                "speech heard over the agent's own voice this call: %d segments dropped as echo",
+                echoes[0] + len(held),
+            )
+            held.clear()
 
     session.on("conversation_item_added", on_item_added)
     session.on("agent_state_changed", on_agent_state)
     session.on("user_state_changed", on_user_state)
     session.on("close", on_close)
+    if transcript is not None:
+        session.on("function_tools_executed", _guarded("write tool calls")(transcript.tools))
 
 
 def wire_risk_updates(room: rtc.Room, state: CallState) -> None:
@@ -402,6 +532,19 @@ def _user_turn(state: CallState, message: ChatMessage) -> Turn | None:
     return Turn(role=Role.USER, text=text, start_ms=when, end_ms=when, words=[], interrupted=False)
 
 
+def _leg(state: CallState) -> str:
+    """Which leg of the call the caller's audio is on: the number dialed back, or the inbound."""
+    if state.caller_identity.startswith(CALLEE_PREFIX):
+        return TRACK_CALLBACK
+    return TRACK_CALLER
+
+
+def _last_agent_line_end(state: CallState, before_ms: int) -> int | None:
+    """When the agent's last line before `before_ms` ended, or None if it has said nothing yet."""
+    ends = [s.end_ms for s in state.agent_speech if s.end_ms is not None and s.end_ms <= before_ms]
+    return max(ends) if ends else None
+
+
 def _agent_began_speaking(state: CallState, at_ms: int) -> None:
     if state.agent_speech and state.agent_speech[-1].end_ms is None:
         return  # already speaking: keep the start we have
@@ -458,12 +601,17 @@ def _ms(epoch_s: float) -> int:
     return round(epoch_s * 1000)  # the one rule turns.py uses for every time
 
 
-def _describe(item: Turn | SpeechEvent) -> str:
-    """One log line for a forwarded item: its kind and times, never its text."""
+def _describe(item: Item) -> str:
+    """One log line for a forwarded item: its kind and times, never its text or its sound."""
     if isinstance(item, Turn):
         return (
             f"forwarding turn: role={item.role.value} start_ms={item.start_ms} "
             f"end_ms={item.end_ms} words={len(item.words)} interrupted={item.interrupted}"
+        )
+    if isinstance(item, AudioSegment):
+        return (
+            f"forwarding audio segment: leg={item.track_id} start_ms={item.start_ms} "
+            f"end_ms={item.end_ms} duration_ms={item.duration_ms}"
         )
     return f"forwarding event: type={item.type.value} ts_ms={item.ts_ms}"
 
@@ -611,3 +759,45 @@ async def _close_forwarder(forwarder: Forwarder, consumer: asyncio.Task[None] | 
             await asyncio.wait({consumer}, timeout=FORWARDER_CLOSE_S)
     except Exception as exc:
         log_failure(logger, "close the forwarder", exc)
+
+
+# --- the background audio, at the job's shutdown ----------------------------------------------
+
+BACKGROUND_CLOSE_S = 1.0  # for the background audio player to stop its sounds and unpublish
+
+
+class _Closable(Protocol):
+    async def aclose(self) -> None: ...
+
+
+class _Connected(Protocol):
+    def isconnected(self) -> bool: ...
+
+
+async def close_background(background: _Closable, room: _Connected) -> None:
+    """Close the BackgroundAudioPlayer at the job's shutdown, for at most BACKGROUND_CLOSE_S.
+
+    In livekit-agents 1.8.10 the job's shutdown disconnects the room before it runs the shutdown
+    callbacks, and the room is usually gone already: every end of a call deletes it. The player's
+    aclose() ends by unpublishing its track, and on a room that is no longer connected that wait
+    never returns (the room's event task has ended, so the answer never reaches it). Registered
+    bare, the close held the job open until the worker killed the process at 10 s. What comes
+    before the unpublish (stopping the mixer and the sounds, closing the audio source) takes
+    milliseconds, so the bound only ever cuts off a step that has nothing left to unpublish from:
+    that is logged at debug. A close still running on a connected room is a warning. Never raises.
+    """
+    try:
+        async with asyncio.timeout(BACKGROUND_CLOSE_S):
+            await background.aclose()
+    except TimeoutError:
+        if room.isconnected():
+            logger.warning(
+                "the background audio was still closing after %g s, leaving it", BACKGROUND_CLOSE_S
+            )
+        else:
+            logger.debug(
+                "the background audio's track went with the room; its close is cut off after %g s",
+                BACKGROUND_CLOSE_S,
+            )
+    except Exception as exc:
+        log_failure(logger, "close the background audio", exc)

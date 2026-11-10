@@ -620,3 +620,58 @@ def test_a_dropped_oh_cancels_double_like_any_other_word():
 def test_ten_the_teens_and_hundred_are_not_parsed(text, digits):
     # The docstring says so: they are dropped like any other word, and what is around them stays.
     assert parse_spoken_digits(text) == digits
+
+
+# --- A number naming the code's length is not a digit of the code ------------------------------
+# On a real call the caller said "The six digit code is 1 2 3 4 5 6" and the step heard 7 digits,
+# because the "six" of "six digit" was counted. A number right before "digit" or "digits" says how
+# long the code is, not what it is. The rule is that pattern, not "drop the first digit": a caller
+# who really says seven digits is still heard as seven, and "six" as a genuine first digit stays.
+
+
+@pytest.mark.parametrize(
+    "text, digits",
+    [
+        pytest.param("The six digit code is 1 2 3 4 5 6", "123456", id="the_six_digit_code_is"),
+        pytest.param("six-digit code 1 2 3 4 5 6", "123456", id="six_hyphen_digit_code"),
+        pytest.param("my 6 digit code is 1 2 3 4 5 6", "123456", id="my_6_digit_code_is"),
+        pytest.param("the code is 1 2 3 4 5 6", "123456", id="the_code_is"),
+        pytest.param("it's 1 2 3 4 5 6", "123456", id="its"),
+        pytest.param(
+            "the six digit code is one two three four five six",
+            "123456",
+            id="six_digit_code_then_digit_words",
+        ),
+        pytest.param("the six digits are 1 2 3 4 5 6", "123456", id="the_six_digits_are"),
+        pytest.param("The 6-digit code: 424242", "424242", id="numeral_hyphen_digit_code"),
+        pytest.param(
+            "1 2 3 4 5 6, that's the six digit code", "123456", id="length_named_after_the_code"
+        ),
+        pytest.param("Oh, the six digit code is 1 2 3 4 5 6", "123456", id="oh_then_the_phrase"),
+        pytest.param("oh six digit code is 1 2 3 4 5 6", "123456", id="oh_right_before_the_count"),
+    ],
+)
+def test_a_number_naming_the_code_length_is_not_counted(text, digits):
+    assert parse_spoken_digits(text) == digits
+
+
+@pytest.mark.parametrize(
+    "text, digits",
+    [
+        pytest.param("six two four two four two", "624242", id="six_as_a_genuine_first_digit"),
+        pytest.param("1 2 3 4 5 6 7", "1234567", id="seven_digits_really_said"),
+        pytest.param(
+            "the six digit code is 1 2 3 4 5 6 7", "1234567", id="seven_digits_after_the_phrase"
+        ),
+        pytest.param("six", "6", id="six_alone"),
+        pytest.param("six digit", "", id="the_count_alone"),
+        pytest.param("digit six", "6", id="digit_before_the_number_is_not_a_count"),
+        pytest.param("six um digits 4 2", "642", id="a_word_between_breaks_the_pattern"),
+    ],
+)
+def test_the_rule_is_the_phrase_and_not_dropping_the_first_digit(text, digits):
+    assert parse_spoken_digits(text) == digits
+
+
+def test_a_code_spoken_as_groups():
+    assert parse_spoken_digits("four twenty-four, two forty-two") == "424242"

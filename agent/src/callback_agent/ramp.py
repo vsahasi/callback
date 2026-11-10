@@ -9,7 +9,7 @@ docs/research_notes/Callback agent build research/ramp_developer_api.md.
 """
 
 import logging
-from asyncio import Lock, sleep
+from asyncio import Lock, Task, ensure_future, shield, sleep
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -260,6 +260,20 @@ def _names(vendor: Vendor) -> list[str]:
     return [n for n in (_normal(vendor.name), _normal(vendor.display_name or "")) if n]
 
 
+def match_vendor(name: str, vendors: list[Vendor]) -> Vendor | None:
+    """The vendor among `vendors` the caller means by `name`, or None.
+
+    Case and spacing don't matter. A vendor whose name or display name contains `name` comes
+    first (the shortest such name, so an exact match beats a longer one). Failing that, the
+    vendor with the closest spelling, if it is at least 0.8 similar. A blank `name` finds
+    nothing, because "" is inside every name.
+    """
+    wanted = _normal(name)
+    if not wanted:
+        return None
+    return _containing(wanted, vendors) or _spelled_like(wanted, vendors)
+
+
 def _containing(wanted: str, vendors: list[Vendor]) -> Vendor | None:
     """The vendor whose shortest matching name contains `wanted`. Ramp's order breaks ties."""
     best: tuple[int, Vendor] | None = None
@@ -295,6 +309,12 @@ class RampClient:
     before it expires. Pages are followed to the end, but only along URLs on the base URL's own
     origin, because each request carries the bearer token. `http` replaces the client the instance
     would create; aclose() closes it either way.
+
+    find_vendor reads the vendor list from one fetch per instance, that is once per call: the list
+    is five pages in the sandbox, every tool that names a vendor looks one up, and a vendor's name
+    and id don't change during a call. prefetch_vendors() starts that fetch early, and a fetch
+    that fails is forgotten, so the next lookup tries again. list_vendors() itself is always a
+    live read.
     """
 
     SCOPES = "vendors:read vendors:write bills:read bills:write"
@@ -312,25 +332,37 @@ class RampClient:
         self._http = http if http is not None else httpx.AsyncClient()
         self._token: _Token | None = None
         self._token_lock = Lock()
+        self._vendors: Task[list[Vendor]] | None = None
 
     # --- reads ---
 
     async def list_vendors(self) -> list[Vendor]:
         return await self._list_all("/vendors", Vendor)
 
-    async def find_vendor(self, name: str) -> Vendor | None:
-        """The vendor the caller means by `name`, or None.
+    def prefetch_vendors(self) -> None:
+        """Start fetching the vendors now, so the first find_vendor finds them already there."""
+        self._vendors_fetch()
 
-        Case and spacing don't matter. A vendor whose name or display name contains `name` comes
-        first (the shortest such name, so an exact match beats a longer one). Failing that, the
-        vendor with the closest spelling, if it is at least 0.8 similar. A blank `name` finds
-        nothing, because "" is inside every name.
-        """
-        wanted = _normal(name)
-        if not wanted:
-            return None
-        vendors = await self.list_vendors()
-        return _containing(wanted, vendors) or _spelled_like(wanted, vendors)
+    def _vendors_fetch(self) -> Task[list[Vendor]]:
+        fetch = self._vendors
+        if fetch is None:
+            fetch = self._vendors = ensure_future(self.list_vendors())
+            fetch.add_done_callback(self._vendors_fetched)
+        return fetch
+
+    def _vendors_fetched(self, fetch: Task[list[Vendor]]) -> None:
+        # Retrieving the exception here keeps asyncio from logging "exception was never
+        # retrieved" when nobody awaits a prefetch; _send has already logged what Ramp said.
+        failed = fetch.cancelled() or fetch.exception() is not None
+        if failed and self._vendors is fetch:
+            self._vendors = None
+
+    async def find_vendor(self, name: str) -> Vendor | None:
+        """The vendor the caller means by `name`, or None: match_vendor over the call's fetch."""
+        if not _normal(name):
+            return None  # nothing to look for, so nothing to fetch
+        # shield: a caller cancelled while it waits must not cancel the fetch the call shares.
+        return match_vendor(name, await shield(self._vendors_fetch()))
 
     async def list_vendor_accounts(self, vendor_id: str) -> list[VendorBankAccount]:
         return await self._list_all(f"/vendors/{_seg(vendor_id)}/accounts", VendorBankAccount)
@@ -406,6 +438,8 @@ class RampClient:
         return await self._send(method.upper(), self._url(path), json=json)
 
     async def aclose(self) -> None:
+        if self._vendors is not None and not self._vendors.done():
+            self._vendors.cancel()  # a prefetch nobody waited for: the call is over
         await self._http.aclose()
 
     # --- plumbing ---
@@ -503,6 +537,10 @@ class RampClient:
         a new token and one more send. `redact` values never appear in the error.
         """
         waits = iter(READ_RETRY_WAITS_S if method == "GET" else ())
+        if method != "GET":
+            # A write may change what the vendor list says (a script creates a vendor, then looks
+            # it up on the same client), so the next find_vendor fetches the list afresh.
+            self._vendors = None
         renewed, refused = False, None
         while True:
             token = await self._access_token(refused)

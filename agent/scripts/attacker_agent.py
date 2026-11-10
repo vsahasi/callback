@@ -101,7 +101,7 @@ def build_models(config: AttackConfig) -> tuple[Any, Any, Any]:
     """
     return (
         deepgram.STTv2(model="flux-general-en"),
-        openai.LLM(model="gpt-4.1"),
+        openai.LLM(model="gpt-5.6-terra"),
         cartesia.TTS(model="sonic-3", voice=config.voice_id),
     )
 

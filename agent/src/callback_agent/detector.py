@@ -43,6 +43,8 @@ from callback_shared.contract import (
 )
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
+from callback_agent.audio_segments import AudioSegment, speech_segment_body
+
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_S = 5.0  # OTP calls wait on Twilio
@@ -120,6 +122,25 @@ class DetectorClient:
 
     async def post_event(self, session_id: str, event: SpeechEvent) -> None:
         await self._send("POST", f"/v1/sessions/{session_id}/events", body=event)
+
+    async def post_speech_segment(
+        self,
+        session_id: str,
+        segment: AudioSegment,
+        *,
+        sequence: int,
+        claimed_user_id: str | None,
+    ) -> None:
+        """Give the detector one segment of the caller's speech to measure, inline.
+
+        This is the detector's own /events intake, not a /v1 route: the only way audio reaches it
+        without a hidden listener or a bucket. The session id is the /v1 session's, so the detector
+        can line the two up; `sequence` counts up per session, as the intake requires.
+        """
+        body = speech_segment_body(
+            session_id, segment, sequence=sequence, claimed_user_id=claimed_user_id
+        )
+        await self._send("POST", "/events", body=body)
 
     async def create_challenge(self, session_id: str, kind: ChallengeKind) -> ChallengeIssued:
         return await self._fetch(
