@@ -25,41 +25,63 @@ the decision.
 The detector measures five signals: voice match against an enrolled print,
 synthesis artefacts, replay channel, turn-taking behaviour and liveness.
 These are classical signal processing, numpy only, with no trained model in
-the serving path. That was deliberate. We had no labelled corpus, and an
-untrained model would have been a guess wearing a confidence score. Classical
-DSP is deterministic, so a disputed decision is reproducible from the stored
-audio.
+the serving path. It hears the caller because the agent sends the speech:
+frames already tapped for STT go out as one segment per stretch of caller
+speech, inline 16 kHz mono WAV, 20 seconds at most, tagged `caller` or
+`callback` for the leg it was heard on, to the detector's `/events`. `/v1`
+reads what `/events` measured through one seam, `detector/bridge.py`: voice
+match passes through, synthesis and bot-likeness invert into risks, and the
+worst of synthesis, replay and liveness is the spoof number the policy gates
+on. Nothing heard is still a deny. The audio field on the `/v1` wire stays
+unfilled; the hidden listener an earlier draft described was never built,
+and this replaces it.
+
+The leg tag is for the one attack no other signal can see: a live human
+impostor, whose voice is real and whose code goes to the number on file.
+Callback rings that number back, so whoever answers is the in-call
+reference, and the two legs' prints are compared. That check is in review;
+main carries the tag, not the comparison.
 
 Scoring is where the care went. Audio that could not be measured blends to
 maximum risk rather than zero. One failing signal beats a low average. A
 correct SMS code cannot rescue a replay.
 
-The honest gap: the detector cannot yet hear the room. The agent sends words
-and timings; the audio field on the wire is still unfilled, so the acoustic
-signals run on uploaded clips, not live calls.
+The honest tradeoff: synthetic speech is caught by a DSP detector, not a
+trained one. That was deliberate. We had no labelled corpus; the trained
+countermeasure in `training/` has run once, a smoke test on random audio
+with a dev EER of 0.5, which is chance, and an untrained model would have
+been a guess wearing a confidence score. Classical DSP is deterministic, so a
+disputed decision is reproducible from the stored audio. The cost: a
+commercial clone that fakes micro-variation is where this detector is
+weakest.
 
-With more time: build that listener, and recalibrate the thresholds against
-ASVspoof instead of audio this repo generated itself.
+With more time: train that model on phone-channel data, put it behind the
+same `/events` seam, and recalibrate the thresholds against ASVspoof instead
+of audio this repo generated itself.
 
 ---
 
-## Checked on 2026-11-08
+## Checked on 2026-11-09
 
 | claim | where |
 | --- | --- |
-| Deepgram `flux-general-en`, gpt-5.6-terra, Cartesia `sonic-3`, Silero VAD | `agent/src/callback_agent/worker.py:109` |
+| Deepgram `flux-general-en`, gpt-5.6-terra, Cartesia `sonic-3`, Silero VAD | `AgentSession` at `agent/src/callback_agent/worker.py:119`, the vendors at `:120` to `:122` |
 | three second budget, a timeout counts as deny | `AUTHORIZE_TIMEOUT_S = 3.0`, `shared/src/callback_shared/contract.py:30` |
-| the detector answers deny past 2.2 s | `AUTHORIZE_SERVER_DEADLINE_S`, same file |
-| every other path is a deny | `agent/src/callback_agent/gate.py:9` |
+| the detector answers deny past 2.2 s | `AUTHORIZE_SERVER_DEADLINE_S`, same file, `:33` |
+| every other path is a deny | `agent/src/callback_agent/gate.py:10` |
 | a denied money move still holds the vendor | `DENY_HOLD_REASON`, `gate.py:46` |
-| step-up factors: voice challenge, SMS code, callback on file | `agent/src/callback_agent/stepups.py:154` |
-| nothing measured blends to 1.0, not 0.0 | `blend_risk` in `detector/scoring.py` |
-| the listener is not built | no `ClipRef` or `Turn.audio` is set anywhere in `agent/src/` |
+| step-up factors: voice challenge, SMS code, callback on file, and a probe question | `Factor`, `contract.py:83`; `agent/src/callback_agent/stepups.py:153` |
+| nothing measured blends to 1.0, not 0.0 | `blend_risk`, `detector/scoring.py:30` |
+| segments: 20 s at most, 16 kHz mono WAV as a `data:` URI, leg-tagged | `MAX_SEGMENT_S`, `agent/src/callback_agent/audio_segments.py:31`; `WIRE_SAMPLE_RATE_HZ`, `:34`; the URI, `:168`; the leg stamp, `session_wiring.py:334`; the POST to `/events`, `detector.py:143` |
+| the `/v1` audio field is still unfilled | no `ClipRef` or `Turn.audio` is set anywhere in `agent/src/` |
+| `/v1` reads `/events`: polarity, worst-of, `no_audio` | `signals_from_factors`, `detector/bridge.py:73`, worst-of at `:93`; `_engine_signals`, `detector/v1/service.py:684`; `NO_AUDIO`, `detector/v1/policy.py:198` |
+| the cross-leg check is not on main | the only `track_id` in `detector/` is the placeholder `enrolment.py:562`; `detector/legs.py` is not in the tree |
+| DSP synthesis; torch only in the `train` extra; one smoke test, EER 0.5 | `detector/analysis/synthesis.py:1`; `pyproject.toml:12` and `:37`; `training/train.py:4`; `README.md:309` |
 
 The earlier draft of this file said the detection service "joins the LiveKit
 room as a hidden listener and hears only the caller's audio track." It does
-not. `detector/v1/clips.py` is the seam that a listener would plug into, and
-the producer on the agent side was never written.
+not. The agent posts the caller's speech to `/events` itself, and the
+detector's `/v1` side reads what that measured.
 
 That draft also cited a figure of 43 to 83 percent for cloned voices passing
 speaker verification. No source for it exists in this repo, so it is left out
