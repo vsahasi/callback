@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from callback_shared.contract import UserOnFile, UserSummary
@@ -31,6 +32,18 @@ PHONE_E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 # Stripped from both ends of a name after whitespace, so "Eric Catalano." and
 # "eric catalano?" find the same person. STT puts punctuation there.
 _EDGE_PUNCTUATION = ".,!?"
+
+# When no name contains what was heard, the closest spelling counts if it is
+# at least this similar (difflib ratio). Narrowband phone audio turns
+# "Catalano" into "Catalado" or "Catawano" (0.92 against the display name);
+# a different person's name sits far below ("Sabrina Rao" is 0.33). The same
+# cutoff the agent's Ramp vendor lookup uses.
+FUZZY_CUTOFF = 0.8
+
+# A second user whose best ratio is within this of the winner's makes the
+# match ambiguous: every user that close comes back, so the agent sees
+# several and identifies nobody, rather than the directory guessing.
+AMBIGUITY_MARGIN = 0.05
 
 
 class _FileUser(BaseModel):
@@ -169,27 +182,58 @@ class UserDirectory:
         return len(self._users)
 
     def search(self, name: str) -> list[UserSummary]:
-        """Exact match after normalisation, on the display name or an alias.
+        """The users the caller may mean by `name`, in file order.
 
-        In file order. The agent goes ahead only on exactly one match.
+        The name is a speech-to-text guess, so the match is tolerant in two
+        steps, on the display name and every alias, all normalised:
+
+        1. Containing. Every user with a name that contains what was heard.
+           An exact match is one of these; so is a first name alone, which
+           finds everyone who has it.
+        2. Closest spelling, only when nothing contains it. The user whose
+           closest name is at least FUZZY_CUTOFF similar, alone, unless
+           another user's best ratio is within AMBIGUITY_MARGIN of it: then
+           all of them come back, and nobody when none reaches the cutoff.
+
+        Either way a list, so the agent's "exactly one match" rule decides.
+        A blank name finds nobody, because "" is inside every name.
         """
 
         needle = normalise_name(name)
         if not needle:
             return []
-        return [
-            UserSummary(
-                user_id=user.user_id,
-                display_name=user.display_name,
-                role=user.role,
-                phone_last_four=user.phone_last_four,
+        containing = [
+            user for user, names in self._names if any(needle in n for n in names)
+        ]
+        return [_summary(user) for user in (containing or self._spelled_like(needle))]
+
+    def _spelled_like(self, needle: str) -> list[UserOnFile]:
+        scored = [
+            (
+                max(
+                    (SequenceMatcher(None, needle, n).ratio() for n in names),
+                    default=0.0,
+                ),
+                user,
             )
             for user, names in self._names
-            if needle in names
         ]
+        best = max((ratio for ratio, _ in scored), default=0.0)
+        if best < FUZZY_CUTOFF:
+            return []
+        return [user for ratio, user in scored if best - ratio < AMBIGUITY_MARGIN]
 
     def get(self, user_id: str) -> UserOnFile | None:
         return self._by_id.get(user_id)
+
+
+def _summary(user: UserOnFile) -> UserSummary:
+    return UserSummary(
+        user_id=user.user_id,
+        display_name=user.display_name,
+        role=user.role,
+        phone_last_four=user.phone_last_four,
+    )
 
 
 def _print_warning(message: str) -> None:
