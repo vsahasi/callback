@@ -382,9 +382,12 @@ class DetectorEngine:
         """Turn the evidence into a decision and move the session.
 
         `step_up=False` is the re-evaluation of a session that has already
-        allowed: the middle band and a diluted FAIL fall closed to deny, the
-        way `scoring.decide` already treats an exhausted OTP, because a code
-        cannot be requested after the agent has heard complete_allow.
+        allowed. A code cannot be requested after the agent has heard
+        complete_allow, so a failing signal falls closed to deny, the way
+        `scoring.decide` already treats an exhausted OTP. The middle band with
+        nothing failing is different: it is not attack evidence, and a deny
+        here is terminal, so the callback leg and anything after it would go
+        unheard. The allow stands, with the factors brought up to date.
         """
 
         script = evidence
@@ -415,6 +418,15 @@ class DetectorEngine:
         failing = scoring.first_failing_factor(factors)
         if decision is Decision.ALLOW and failing is not None:
             decision = Decision.CHALLENGE if otp_available else Decision.DENY
+        if (
+            not step_up
+            and failing is None
+            and decision is Decision.DENY
+            and risk < scoring.DENY_AT_OR_ABOVE
+        ):
+            decision = (
+                Decision.ALLOW
+            )  # the middle band after an allow: see the docstring
 
         session.factors = factors
         session.risk_score = risk

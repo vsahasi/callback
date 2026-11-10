@@ -96,6 +96,7 @@ def _span(**scores: float) -> list[Factor]:
 
 
 CLEAN = _span()
+CLEAN_NAMES = {f.name for f in CLEAN}
 SYNTHETIC = _span(synthetic_speech=0.05)  # a FAIL, but not a fatal factor
 REPLAY = _span(replay=0.05)  # fatal: at or below 0.10
 
@@ -171,6 +172,31 @@ def test_a_synthetic_span_after_two_clean_ones_denies() -> None:
     # A deny is still terminal: nothing can lift it, so nothing more is heard.
     with pytest.raises(SessionTerminal):
         hear(engine, segment(4), CLEAN)
+
+
+def test_a_middle_band_span_after_allow_leaves_the_allow_standing() -> None:
+    """No signal failed, the blend just slipped into the band where a code
+    would normally be asked for. After an allow there is no code to ask for,
+    and a deny would be terminal: the callback leg, and any attack evidence
+    after it, would never be heard. So the allow stands, with the factors
+    brought up to date for /v1 to read, and the session keeps listening."""
+
+    engine = DetectorEngine(real_settings())
+    hear(engine, segment(1), CLEAN)
+    assert hear(engine, segment(2), CLEAN).decision is Decision.ALLOW
+
+    # Every signal inconclusive: blended risk lands between ALLOW_BELOW and DENY_AT_OR_ABOVE.
+    inconclusive = {name.value: 0.55 for name in FactorName if name in CLEAN_NAMES}
+    middle = hear(engine, segment(3), _span(**inconclusive))
+    assert middle.state is SessionState.ALLOWED
+    assert middle.decision is Decision.ALLOW
+    voice = next(f for f in middle.factors if f.name is FactorName.VOICE_MATCH)
+    assert voice.score == pytest.approx(0.55)  # worst-of brought the factor down
+    assert voice.verdict is FactorVerdict.INCONCLUSIVE
+
+    # Still hearing: the callback leg arrives, and a failing span still denies.
+    assert hear(engine, segment(4, "callback"), CLEAN).state is SessionState.ALLOWED
+    assert hear(engine, segment(5, "callback"), SYNTHETIC).state is SessionState.DENIED
 
 
 def test_a_fatal_span_after_allow_flips_to_deny() -> None:

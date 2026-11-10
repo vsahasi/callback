@@ -193,7 +193,7 @@ Real mode has one exception. There `/v1` decides and reads this engine's
 factors through `detector/bridge.py`, so an `allowed` session keeps accepting
 `speech_segment` for as long as it lives: each span is analysed and merged
 worst-of into the factors, the envelope stays `allow` while they stay clean,
-and a later fatal or failing span moves the session to `denied`. That is what
+and a later span with a fatal or failing signal moves the session to `denied`, which is terminal; a span whose signals are merely inconclusive leaves the allow standing with the factors brought up to date, so the callback leg is still heard. That is what
 lets the callback leg of a call, posted under the same session id a few minutes
 after the first turn, be heard at all. A `denied` session refuses in both modes.
 
