@@ -19,7 +19,9 @@ To get the answers: with `RAMP_CLIENT_ID` and `RAMP_CLIENT_SECRET` in `.env`, an
 
 3. `add_default_bank_account`: `approved` or `pending_approval`? This decides what the agent says in demo call 1.
 
-   Answer:
+   Answer: `approved`. On the Nov 9 rehearsal the allowed change (`POST .../update-bank-accounts
+   -> HTTP 200`) made the account ending 6789 Acme's default at once, with no approval step, so
+   the agent closes with "Acme Supplies now pays to the account ending 6789".
 
 4. `release_vendor`: 204 or 202?
 
