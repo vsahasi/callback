@@ -43,9 +43,14 @@ where the enrolment comparison left it.
 call. A mismatch is *confirmed*, and therefore fatal and unrescuable, only when
 the comparator said FAIL, said it was confident (its own flag, read from
 `compare_prints`, not re-derived here), and both legs carry at least this much
-speech. A FAIL that clears the first gate but not the second is still a FAIL
-on the `voice_match` factor, which steps the caller up exactly as an enrolment
-mismatch does, but it is not fatal and a correct code can still rescue it.
+speech. A FAIL that clears the first gate but not the second, like an
+inconclusive result, is recorded on the session and goes no further: it adds
+no `voice_match` factor (`CrossLegCheck.merge_factor` is None), so the factor
+stays exactly where the enrolment comparison left it until the legs carry
+enough speech to confirm the mismatch or to pass. It used to be merged as a
+FAIL, which `/v1` read through `detector.bridge` as a voiceprint under its
+0.45 fail line, one voice fail against a caller the comparator had not yet
+made its mind up about.
 
 The margin, measured
 --------------------
@@ -62,24 +67,30 @@ above 0.62 and fail at or below 0.32:
 
 So the within-speaker margin of the comparator itself is narrow: the same
 talker four to five semitones up can already produce a confident FAIL, and the
-confirmation gate does not widen that margin. What it buys is time and a way
-out. A four-second turn carries 2.3 to 2.8 s of speech on this corpus (1.8 to
-2.6 s at 16 kHz), so one turn per leg can step the caller up but never refuse
-them; refusal needs roughly five seconds of audio on each leg, or a second
-turn, and by then the step-up has been offered. Two clearly different voices
-are confirmed as soon as the second gate is crossed, at either sample rate
-(the 2.0 s and 3.0 s gates fall on the same clip counts at 8 and 16 kHz).
+confirmation gate does not widen that margin. What it buys is time. A
+four-second turn carries 2.3 to 2.8 s of speech on this corpus (1.8 to 2.6 s
+at 16 kHz), so one turn per leg can be compared but never refuses anyone;
+refusal needs roughly five seconds of audio on each leg, or a second turn.
+Two clearly different voices are confirmed as soon as the second gate is
+crossed, at either sample rate (the 2.0 s and 3.0 s gates fall on the same
+clip counts at 8 and 16 kHz). The inconclusive +4 st cases above never are,
+and never touch the factor list.
 
 How it scores
 -------------
 `compare_prints`, the same function that judges a caller against an enrolled
-reference, with the same thresholds (`detector.analysis.cues`). The result is
-a `voice_match` factor, because that is what it is, and because the wire
-contract is frozen by a schema snapshot. `combine_factors` then keeps
-whichever `voice_match` scored lowest, so a cross-leg mismatch is never
-averaged away by a matching enrolment, and a mismatching enrolment is never
-hidden by consistent legs. Either way `/v1` reads a voiceprint below its fail
-line through `detector.bridge` whenever the legs failed.
+reference, with the same thresholds (`detector.analysis.cues`). A settled
+result (a PASS, or a confirmed FAIL) is a `voice_match` factor, because that
+is what it is, and because the wire contract is frozen by a schema snapshot.
+`combine_factors` then keeps whichever `voice_match` scored lowest, so a
+confirmed cross-leg mismatch is never averaged away by a matching enrolment,
+and a mismatching enrolment is never hidden by consistent legs.
+
+`/v1` learns of a confirmed mismatch by name: `detector.bridge` reads
+`Session.cross_leg` beside the factor list and carries it as a fatal deny code
+(`EngineSignals.fatal`), so the policy denies `speaker_mismatch` and locks the
+session rather than reading the low voiceprint as one voice fail of two and
+stepping the caller up for the code and callback that cannot rescue it.
 """
 
 from __future__ import annotations
@@ -309,6 +320,25 @@ class CrossLegCheck:
             verdict=self.verdict,
             detail=detail[:500],
         )
+
+    @property
+    def settled(self) -> bool:
+        """The comparison is evidence: the legs match, or they are confirmed
+        not to. Anything else is a measurement still waiting for speech."""
+
+        return self.verdict is FactorVerdict.PASS or self.confirmed
+
+    def merge_factor(self) -> Factor | None:
+        """The factor to merge into the span's list, or None.
+
+        Only a settled comparison goes on the wire. An inconclusive result,
+        or a FAIL on legs too thin to confirm, is not evidence against the
+        caller: the same talker four semitones up lands there. Merged, it
+        reached `/v1` as a voiceprint under its 0.45 fail line and counted
+        as a voice fail, so it stays on the session instead.
+        """
+
+        return self.factor() if self.settled else None
 
     def fatal_factor(self) -> Factor | None:
         """The factor to hand `scoring.fatal_factor`, or None if not confirmed."""

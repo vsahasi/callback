@@ -368,10 +368,16 @@ class DetectorEngine:
         joins the leg its `track_id` names, and once both the caller and the
         callback legs hold enough speech the two are compared. The comparison
         is kept whole on `session.cross_leg`, which is what the fatal rule
-        reads, and its `voice_match` factor is merged into this span's
-        factors, where `combine_factors` keeps whichever `voice_match` scored
-        lower: a mismatch between the legs is never hidden by a matching
-        enrolment, and `/v1` reads the lower score either way.
+        and the dashboard read, whatever its verdict.
+
+        Only a settled comparison reaches the factor list: a PASS, or a
+        confirmed FAIL (`CrossLegCheck.merge_factor`). Merged, the factor
+        joins this span's `voice_match` in `combine_factors`, where the lower
+        score wins, so a confirmed mismatch is never hidden by a matching
+        enrolment. An inconclusive result, or a FAIL on legs too thin to
+        confirm, contributes nothing: it is not evidence against the caller,
+        and on the wire it reached `/v1` as a voiceprint under its fail line,
+        where it counted as a voice fail against a legitimate talker.
         """
 
         if self.settings.mock_mode or voice is None or request.audio is None:
@@ -381,7 +387,10 @@ class DetectorEngine:
         if check is None:
             return observed
         session.cross_leg = check
-        return combine_factors(observed, [check.factor()])
+        contribution = check.merge_factor()
+        if contribution is None:
+            return observed
+        return combine_factors(observed, [contribution])
 
     def _speaker_mismatch(self, session: Session) -> Factor | None:
         """The session's confirmed cross-leg mismatch as a factor, or None.
@@ -742,6 +751,25 @@ class DetectorEngine:
         except DetectorError:
             return None
         return session.claimed_user_id
+
+    def cross_leg_for(self, session_id: str) -> legs.CrossLegCheck | None:
+        """The session's latest cross-leg comparison, or None.
+
+        A plain read, like `claimed_identity`, for `detector.bridge`, which
+        reads it beside `factors_for` so that `/v1` learns of a confirmed
+        mismatch by name rather than inferring it from a `voice_match` score
+        that worst-score merging may have replaced. None for a session that
+        does not exist, has not had both legs compared, or in mock mode,
+        which never compares legs.
+        """
+
+        if self.settings.mock_mode:
+            return None
+        try:
+            session = self.store.get(session_id)
+        except DetectorError:
+            return None
+        return session.cross_leg
 
     def factors_for(self, session_id: str) -> FactorsResponse:
         def apply(session: Session) -> FactorsResponse:

@@ -181,6 +181,17 @@ def test_a_lock_beats_a_perfect_tier2() -> None:
 
 
 DENY_CASES: list[tuple[str, SessionView, str]] = [
+    ("the engine's confirmed cross-leg mismatch", view(fatal="speaker_mismatch"), "speaker_mismatch"),
+    (
+        "the mismatch beats a perfect tier 2 and a passing voiceprint",
+        ready_for_tier2(fatal="speaker_mismatch", mock_mode=False, listening=True),
+        "speaker_mismatch",
+    ),
+    (
+        "the mismatch beats a high spoof",
+        view(fatal="speaker_mismatch", mock_mode=False, listening=True, spoof=0.92),
+        "speaker_mismatch",
+    ),
     ("no audio in real mode", view(mock_mode=False, spoof=0.92), "no_audio"),
     ("high spoof, human agent score", view(spoof=0.92, agent=0.10), "synthetic_speech"),
     ("high spoof, agent score high", view(spoof=0.85, agent=0.90), "automated_caller"),

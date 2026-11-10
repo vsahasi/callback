@@ -238,15 +238,19 @@ async def test_too_little_speech_on_a_leg_does_not_run_the_check(
     assert "mismatch" not in (match["detail"] or "")
 
 
-async def test_a_mismatch_on_a_thin_leg_steps_up_rather_than_denying(
+async def test_a_mismatch_on_a_thin_leg_contributes_no_factor_until_confirmed(
     real_client: httpx.AsyncClient,
 ) -> None:
-    """Between the 2.0 s and 3.0 s gates a mismatch is a challenge, not a deny.
+    """Between the 2.0 s and 3.0 s gates a mismatch is recorded, not scored.
 
-    The legs differ, and the factor says so, but with under three seconds of
-    speech on the callback leg the comparator's margin is too narrow to refuse
-    the call on. The caller is stepped up. Once the callback leg carries
-    enough speech the same mismatch becomes the deny it always was.
+    The legs differ, but with under three seconds of speech on the callback
+    leg the comparator's margin is too narrow to hold against the caller: the
+    same talker four semitones up lands in the same place. An unconfirmed
+    result used to go on the wire as a `voice_match` FAIL, which `/v1` read as
+    a voiceprint under its fail line and counted as a voice fail. Now nothing
+    is merged until the comparison is confirmed (or passes), so the factor is
+    exactly where the enrolment comparison left it. Once the callback leg
+    carries enough speech the same mismatch becomes the deny it always was.
     """
 
     call = Call(real_client, "sess-legs-thin-mismatch")
@@ -255,13 +259,10 @@ async def test_a_mismatch_on_a_thin_leg_steps_up_rather_than_denying(
     body = await call.speech("callback", voice(LOW, seed=2, duration_s=THIN))
 
     match = factor(body, FactorName.VOICE_MATCH)
-    assert match["verdict"] == FactorVerdict.FAIL.value
-    assert match["score"] <= 0.32
-    assert "not confident enough" in match["detail"]
-    assert "3.0" in match["detail"]
-    assert body["decision"] == Decision.CHALLENGE.value
-    assert body["next_action"] == NextAction.REQUEST_OTP.value
-    assert body["otp"] is not None
+    assert match["verdict"] == FactorVerdict.NOT_RUN.value
+    assert "mismatch" not in (match["detail"] or "")
+    assert body["decision"] != Decision.DENY.value
+    assert body["next_action"] != NextAction.COMPLETE_DENY.value
 
     body = await call.speech("callback", voice(LOW, seed=3, duration_s=FULL))
     assert factor(body, FactorName.VOICE_MATCH)["detail"].startswith(
@@ -280,7 +281,12 @@ async def test_the_same_talker_shifted_four_semitones_is_not_denied(
     Measured on this corpus at 8 kHz, seeds 1 and 2: 0.3216 at 4 s and 0.3786
     at 6 s, both inside the inconclusive band. The margin is narrow (other
     seed pairs at 6 s score 0.2891, a confident FAIL), which is why the deny
-    also wants three seconds of speech on each leg and why the step-up exists.
+    also wants three seconds of speech on each leg.
+
+    An inconclusive result is not evidence against the caller, so it leaves
+    the `voice_match` factor alone. Merged, it reached `/v1` as a voiceprint
+    of 0.38, under the 0.45 fail line, and the legitimate talker's correct
+    challenge answer settled as `speaker_mismatch`.
     """
 
     call = Call(real_client, f"sess-legs-shifted-{int(duration_s)}")
@@ -291,9 +297,14 @@ async def test_the_same_talker_shifted_four_semitones_is_not_denied(
     )
 
     match = factor(body, FactorName.VOICE_MATCH)
-    assert match["verdict"] == FactorVerdict.INCONCLUSIVE.value
+    assert match["verdict"] == FactorVerdict.NOT_RUN.value  # nothing enrolled
     assert body["decision"] != Decision.DENY.value
     assert body["next_action"] != NextAction.COMPLETE_DENY.value
+
+    signals = signals_from_factors([Factor.model_validate(f) for f in body["factors"]])
+    assert signals.heard
+    assert signals.voiceprint is None
+    assert signals.fatal is None
 
 
 @pytest.mark.parametrize("rate", [8000, 16000])
@@ -305,8 +316,8 @@ async def test_speech_on_a_leg_accumulates_through_both_gates(
     The agent sends 16 kHz; the rest of this file sends 8 kHz. A one-second
     synthetic clip carries 0.4 to 0.85 s of speech at either rate, so three
     clips sit under the 2.0 s compare gate, the fourth crosses it (a
-    mismatch, stepped up) and the fifth crosses the 3.0 s confirmation gate
-    (the deny).
+    mismatch, recorded on the session but not yet on the wire) and the fifth
+    crosses the 3.0 s confirmation gate (the deny).
     """
 
     call = Call(real_client, f"sess-legs-accumulate-{rate}")
@@ -324,19 +335,20 @@ async def test_speech_on_a_leg_accumulates_through_both_gates(
     compared = await call.speech(
         "callback", voice(LOW, seed=5, duration_s=1.0, rate=rate), rate
     )
+    # Compared, and failing, but not confirmed: no factor yet.
     assert factor(compared, FactorName.VOICE_MATCH)["verdict"] == (
-        FactorVerdict.FAIL.value
+        FactorVerdict.NOT_RUN.value
     )
-    assert compared["decision"] == Decision.CHALLENGE.value
+    assert compared["decision"] != Decision.DENY.value
 
     confirmed = await call.speech(
         "callback", voice(LOW, seed=6, duration_s=1.0, rate=rate), rate
     )
-    # The factor on the wire may still be the thinner check's: worst score
-    # wins the merge, and the earlier FAIL can score lower than the confirmed
-    # one. The deny does not depend on it. It reads the session's record.
     assert factor(confirmed, FactorName.VOICE_MATCH)["verdict"] == (
         FactorVerdict.FAIL.value
+    )
+    assert factor(confirmed, FactorName.VOICE_MATCH)["detail"].startswith(
+        "Cross-leg speaker mismatch"
     )
     assert confirmed["decision"] == Decision.DENY.value
     assert confirmed["next_action"] == NextAction.COMPLETE_DENY.value
@@ -521,13 +533,24 @@ def test_an_enrolment_fail_scoring_lower_does_not_hide_the_mismatch() -> None:
     assert signals.heard
     assert signals.voiceprint is not None
     assert signals.voiceprint < VOICEPRINT_FAIL
+    # And the deny itself crosses the seam by name, so /v1 does not have to
+    # infer it from a score it treats as one voice fail of two.
+    assert signals.fatal == "speaker_mismatch"
+    assert engine.cross_leg_for(sid) is stored.cross_leg
+    assert engine.cross_leg_for("sess-nobody-posted") is None
 
 
-def test_a_mismatch_on_thin_legs_is_rescuable_by_a_code() -> None:
-    """Unconfirmed, the mismatch is an ordinary voice_match FAIL: a step-up."""
+def test_a_mismatch_on_thin_legs_is_recorded_but_contributes_no_factor() -> None:
+    """Unconfirmed, the mismatch lives on the session and nowhere else.
+
+    It used to be merged as an ordinary `voice_match` FAIL, a step-up the
+    engine could rescue with a code but `/v1` read as a voice fail. Now the
+    factor list does not change: the record is there for the dashboard and
+    for the moment the legs carry enough speech to confirm it.
+    """
 
     engine = DetectorEngine(real_settings())
-    sid = "sess-legs-thin-rescuable"
+    sid = "sess-legs-thin-recorded"
     engine.handle_event(
         _request(sid, 1, EventType.SESSION_START),
         scenario_header=None,
@@ -547,20 +570,18 @@ def test_a_mismatch_on_thin_legs_is_rescuable_by_a_code() -> None:
         observed_factors=_clean_span(),
         observed_voice=_print(voice(LOW, seed=2, duration_s=THIN)),
     )
-    assert response.decision is Decision.CHALLENGE
-    assert response.otp is not None
+    assert response.decision is not Decision.DENY
+    assert all(f.name is not FactorName.VOICE_MATCH for f in response.factors)
     stored = engine.store.get(sid)
     assert stored.cross_leg is not None
     assert stored.cross_leg.verdict is FactorVerdict.FAIL
     assert not stored.cross_leg.confirmed
+    assert engine.cross_leg_for(sid) == stored.cross_leg
 
-    code = stored.otp.code
-    submitted = engine.handle_event(
-        _request(sid, 4, EventType.OTP_SUBMIT, otp_code=code),
-        scenario_header=None,
-        idempotency_key=None,
-    )
-    assert submitted.decision is Decision.ALLOW
+    signals = signals_from_engine(engine, sid)
+    assert signals.heard
+    assert signals.voiceprint is None
+    assert signals.fatal is None
 
 
 # ---------------------------------------------------------------- the pieces
@@ -630,11 +651,31 @@ def test_a_fail_on_a_thin_leg_is_not_confirmed() -> None:
     assert check.callback_seconds < legs.MIN_CONFIRMED_LEG_SPEECH_SECONDS
     assert not check.confirmed
     assert check.fatal_factor() is None
+    # Nothing goes into the factor list: a FAIL that cannot refuse the call
+    # must not reach /v1 as a voiceprint under its fail line either.
+    assert check.merge_factor() is None
 
-    result = check.factor()
-    assert result.verdict is FactorVerdict.FAIL  # a step-up, like an enrolment fail
-    assert "not confident enough" in (result.detail or "")
-    assert scoring.fatal_factor([result]) is None
+    rendered = check.factor()  # still renderable, for a reviewer
+    assert rendered.verdict is FactorVerdict.FAIL
+    assert "not confident enough" in (rendered.detail or "")
+    assert scoring.fatal_factor([rendered]) is None
+
+
+def test_an_inconclusive_pair_contributes_no_factor() -> None:
+    """Same talker, four semitones up, six seconds: 0.3786, inconclusive."""
+
+    check = legs.compare_legs(
+        _legs(
+            voice(LOW, seed=1, duration_s=FULL),
+            voice(SHIFTED_4ST, seed=2, duration_s=FULL),
+        )
+    )
+    assert check is not None
+    assert check.verdict is FactorVerdict.INCONCLUSIVE
+    assert not check.confirmed
+    assert check.fatal_factor() is None
+    assert check.merge_factor() is None
+    assert "inconclusive" in (check.factor().detail or "")
 
 
 def test_a_matching_pair_is_not_fatal() -> None:
@@ -644,6 +685,19 @@ def test_a_matching_pair_is_not_fatal() -> None:
     assert not check.confirmed
     assert check.fatal_factor() is None
     assert check.factor().verdict is FactorVerdict.PASS
+    merged = check.merge_factor()
+    assert merged is not None and merged.verdict is FactorVerdict.PASS
+
+
+def test_a_confirmed_mismatch_is_merged() -> None:
+    check = legs.compare_legs(
+        _legs(voice(HIGH, seed=1, duration_s=FULL), voice(LOW, seed=2, duration_s=FULL))
+    )
+    assert check is not None and check.confirmed
+    merged = check.merge_factor()
+    assert merged is not None
+    assert merged.verdict is FactorVerdict.FAIL
+    assert merged == check.factor() == check.fatal_factor()
 
 
 def test_an_ordinary_voice_match_fail_is_not_fatal() -> None:
