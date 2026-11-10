@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import httpx
@@ -12,7 +13,13 @@ import pytest
 from callback_shared.contract import UserOnFile, UserSummary
 
 from detector.config import Settings
-from detector.v1.users import UserDirectory, UsersFileError, normalise_name
+from detector.v1.users import (
+    AMBIGUITY_MARGIN,
+    FUZZY_CUTOFF,
+    UserDirectory,
+    UsersFileError,
+    normalise_name,
+)
 from tests.v1.conftest import EXAMPLE_USERS, FakeClock, base_settings, build_app
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -175,8 +182,7 @@ def test_an_alias() -> None:
 
 
 def test_no_match() -> None:
-    assert directory(TWO_USERS).search("Eric") == []
-    assert directory(TWO_USERS).search("Eric Catalan") == []
+    assert directory(TWO_USERS).search("Sabrina Rao") == []
     assert directory(TWO_USERS).search("") == []
     assert directory(TWO_USERS).search("...") == []
 
@@ -184,6 +190,131 @@ def test_no_match() -> None:
 def test_two_matches_come_back_in_file_order() -> None:
     found = directory(TWO_USERS).search("Eric Catalano")
     assert [u.user_id for u in found] == ["u_eric", "u_eric_2"]
+
+
+# -------------------------------------------- speech-to-text tolerance
+
+# The display name alone, no aliases: the tolerance has to come from the
+# matcher, not from the file.
+NO_ALIASES = {
+    "users": [
+        {
+            "user_id": "u_eric",
+            "display_name": "Eric Catalano",
+            "role": "CFO",
+            "phone_e164": "+15555550100",
+        },
+        {
+            "user_id": "u_sabrina",
+            "display_name": "Sabrina Rao",
+            "role": "Controller",
+            "phone_e164": "+15555550101",
+        },
+    ]
+}
+
+
+@pytest.mark.parametrize(
+    "heard",
+    [
+        # Deepgram's two spellings of the CFO's surname on a live call.
+        "Eric Catalado",
+        "Eric Catawano",
+        "Erik Catalano",
+    ],
+)
+def test_a_misheard_surname_still_finds_the_one_closest_user(heard: str) -> None:
+    ratio = SequenceMatcher(None, normalise_name(heard), "eric catalano").ratio()
+    assert ratio >= FUZZY_CUTOFF, ratio
+    found = directory(NO_ALIASES).search(heard)
+    assert [u.user_id for u in found] == ["u_eric"]
+
+
+def test_a_different_person_is_not_close_enough() -> None:
+    ratio = SequenceMatcher(None, "sabrina rao", "eric catalano").ratio()
+    assert ratio < FUZZY_CUTOFF
+    assert [u.user_id for u in directory(NO_ALIASES).search("Sabrina Rao")] == [
+        "u_sabrina"
+    ]
+
+
+def test_a_first_name_alone_finds_the_only_person_with_it() -> None:
+    assert [u.user_id for u in directory(NO_ALIASES).search("Eric")] == ["u_eric"]
+    assert [u.user_id for u in directory(NO_ALIASES).search("Catalano")] == ["u_eric"]
+
+
+def test_a_first_name_shared_by_several_people_finds_all_of_them() -> None:
+    # "eric" is inside "eric catalano", "erica lane" and u_eric_2's alias, so
+    # the agent sees several and identifies nobody.
+    found = directory(TWO_USERS).search("Eric")
+    assert [u.user_id for u in found] == ["u_eric", "u_eric_2"]
+
+
+def test_a_containing_match_beats_a_close_spelling() -> None:
+    # "eric catalan" is inside two names; the fuzzy step never runs.
+    found = directory(TWO_USERS).search("Eric Catalan")
+    assert [u.user_id for u in found] == ["u_eric", "u_eric_2"]
+
+
+def test_a_close_spelling_two_people_share_is_ambiguous() -> None:
+    # u_eric_2 carries "eric catalano" as an alias, so the misheard name is
+    # equally close to both: both come back, never a guess.
+    found = directory(TWO_USERS).search("Eric Catalado")
+    assert [u.user_id for u in found] == ["u_eric", "u_eric_2"]
+
+
+def test_two_close_spellings_within_the_margin_are_ambiguous() -> None:
+    doc = {
+        "users": [
+            {
+                "user_id": "u_a",
+                "display_name": "Eric Catalano",
+                "role": "CFO",
+                "phone_e164": "+15555550100",
+            },
+            {
+                "user_id": "u_b",
+                "display_name": "Eric Catalago",
+                "role": "Controller",
+                "phone_e164": "+15555550101",
+            },
+        ]
+    }
+    first = SequenceMatcher(None, "eric catalado", "eric catalano").ratio()
+    second = SequenceMatcher(None, "eric catalado", "eric catalago").ratio()
+    assert min(first, second) >= FUZZY_CUTOFF
+    assert abs(first - second) < AMBIGUITY_MARGIN
+    found = directory(doc).search("Eric Catalado")
+    assert [u.user_id for u in found] == ["u_a", "u_b"]
+
+
+def test_a_clear_winner_over_a_second_candidate_outside_the_margin() -> None:
+    doc = {
+        "users": [
+            {
+                "user_id": "u_a",
+                "display_name": "Eric Catalano",
+                "role": "CFO",
+                "phone_e164": "+15555550100",
+            },
+            {
+                "user_id": "u_b",
+                "display_name": "Erica Catalina",
+                "role": "Controller",
+                "phone_e164": "+15555550101",
+            },
+        ]
+    }
+    first = SequenceMatcher(None, "eric catalado", "eric catalano").ratio()
+    second = SequenceMatcher(None, "eric catalado", "erica catalina").ratio()
+    assert first - second >= AMBIGUITY_MARGIN, (first, second)
+    assert [u.user_id for u in directory(doc).search("Eric Catalado")] == ["u_a"]
+
+
+async def test_route_search_tolerates_a_misheard_surname(v1: httpx.AsyncClient) -> None:
+    response = await v1.get("/v1/users", params={"name": "Eric Catawano"})
+    assert response.status_code == 200
+    assert [item["user_id"] for item in response.json()] == ["u_eric"]
 
 
 # --------------------------------------------------------------- routes

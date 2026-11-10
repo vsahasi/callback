@@ -42,7 +42,7 @@ echoes an input value.
 
 | # | Route | Answers |
 |---|---|---|
-| 1 | `GET /v1/users?name=` | 200 `list[UserSummary]`, exact match after normalising |
+| 1 | `GET /v1/users?name=` | 200 `list[UserSummary]`: after normalising, every user whose name or alias contains the query; failing that, the closest spelling at >= 0.8 similarity, unless a second user is within 0.05 of it (then all of them) |
 | 2 | `GET /v1/users/{user_id}` | 200 `UserOnFile`, 404 `user_not_found` |
 | 3 | `POST /v1/sessions` (+ `X-Callback-Scenario`) | 200 `SessionCreated`; 404, 409 `session_conflict`, 503 `too_many_sessions`, 400 `invalid_scenario` |
 | 4 | `POST /v1/sessions/{id}/caller` | 204 |
@@ -174,9 +174,10 @@ unknown id is a 404 `session_not_found`.
    `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SERVICE_SID`.
    Give every user in `USERS_ON_FILE_JSON` `aliases` for how speech-to-text
    may spell their name ("Erik Catalano", "Eric Catalono", and so on, as in
-   `users_on_file.example.json`). Name search is an exact match after
-   normalising, so a spelling that is not listed finds nobody and the call
-   stalls at identification.
+   `users_on_file.example.json`). Name search tolerates a misheard surname on
+   its own (the closest display name or alias at >= 0.8 similarity, when no
+   name contains what was heard), but an alias is still the sure way to catch
+   a spelling that falls below that.
 2. `uv run --extra deploy python scripts/modal_preflight.py`, then
    `modal deploy detector/modal_app.py`.
 3. Send the URL to the agent side as `DETECTOR_URL`.
