@@ -74,39 +74,70 @@ also gives the green against red contrast in two clicks on one page.
 
 ## 2. The review dashboard
 
-`web/`, Next.js. **Not captured.** The repo has no Node toolchain in WSL:
-`npm` there resolves to the Windows install at `/mnt/c/Program Files/nodejs`,
-which cannot run against a WSL path, so `npm install` produces an empty
-`node_modules` and `next dev` never starts. Installing Node inside WSL, or
-running the dashboard from the Windows side, would fix it.
+`web/`, Next.js. Dark and terminal-flavoured, and it already uses the green
+against red split. It needs Node, which was missing from WSL until now:
+`~/.local/node` has the LTS build and `~/.bashrc` puts it on PATH.
 
-From the source, these are the elements worth filming once it runs:
+To run it on recorded sample data, with no detector and no auth:
 
-| Element | What it reads | Where |
-| --- | --- | --- |
-| Call list | "Calls", sessions appear on their own | `SessionRail.tsx` |
-| Empty state | "No calls yet. The next call will appear here on its own." | `Dashboard.tsx` |
-| Connecting state | "Connecting to the detector..." | `Dashboard.tsx` |
-| Session header | "Session", "Caller claims", "Channel" | `DetailV1.tsx` |
-| Decision panel | "Decisions", "Last action", "NO DECISION" before one lands | `DetailV1.tsx`, `States.tsx` |
-| Signal panel | "Layers" | `DetailV1.tsx` |
-| Step-up panel | "Step-ups", "Callback on file", "SMS code" | `DetailV1.tsx` |
+```
+cd web && DASHBOARD_FIXTURES=1 npm run dev
+```
 
-It polls the detector, so it updates while a call is running and can be filmed
-live rather than cut in afterwards.
+then open `http://127.0.0.1:3000`.
 
-Two badges to know about:
+### A denied call, speaker mismatch
 
-- **MOCK DETECTOR** renders whenever the detector is in mock mode, which is
-  how every demo call runs. Leave it in frame. It does the same honest work as
-  the 0:20 line, for free, and cropping it would be hiding something the repo
-  already admits.
-- **SAMPLE DATA** renders when `DASHBOARD_FIXTURES=1`. That must be off before
-  filming, or the dashboard tells the viewer the numbers are fake. Note that
-  fixtures mode is also the only way to run the dashboard without a live
-  detector, so any screenshot taken that way will carry the badge.
+![The review dashboard showing a denied call with the voiceprint layer failing](assets/dashboard-1-deny-speaker-mismatch.jpg)
 
-`web/README.md` has the environment it needs: `DETECTOR_URL`, a
+Red DENY with the reason spelled out above it and the contract codes as chips
+underneath: `voiceprint_fail 0.29<0.45`, `spoof_low 0.05`, `text_high 0.80`,
+`text_flags: urgency, verification_refusal`.
+
+The LAYERS panel is the shot for the 1:15 beat. Four named signals with bars,
+green for low and red for the failure:
+
+- Deepfake, LOW 0.05, "Synthetic-speech probability. High is bad."
+- Voiceprint, FAIL 0.29, "Score 0.29 against a threshold of 0.62."
+- Text Risk, HIGH 0.80, with chips for urgency and verification refusal
+- AI Caller, LOW 0.05
+
+Nothing about the audio was synthetic and the caller still did not get
+through, which is exactly what the human impostor beat has to say. The
+DECISIONS panel underneath shows the same call going STEP-UP first and DENY
+second, so the escalation is in the same frame.
+
+### An allowed call, every step-up satisfied
+
+![The review dashboard showing an allowed call with all four step-ups green](assets/dashboard-2-allow-stepups.jpg)
+
+Green ALLOW with `voiceprint pass 0.83>=0.62`. The STEP-UPS panel is the shot
+for the 1:40 beat, because all four rows are filled in and green:
+
+- Voice challenge (phrase), PASSED
+- Voice challenge (phrase), PASSED, the second one on the callback leg
+- SMS code, VERIFIED, "Sent to ending 0100. Attempts: 1."
+- Callback on file, CONFIRMED
+
+That panel tells the whole step-up story without a word of narration, and the
+CHANNEL field reads Phone.
+
+### Badges and states
+
+- **SAMPLE DATA**, orange, top right. It is in both screenshots above because
+  fixtures mode is the only way to run the dashboard without a live detector.
+  It must not be in the video.
+- **MOCK DETECTOR** renders instead when the detector is reachable and in mock
+  mode, which is how every demo call runs. Leave that one in frame. It does
+  the same honest work as the 0:20 line, for free.
+- The rail reads "CALLS" with "FOLLOWING LATEST" in green, and switches to
+  "PINNED" the moment you click into an older call, which also drops a "This
+  is an older call. Jump to the newest" bar across the top. Film the newest
+  call or that bar is in shot.
+- A call with no decision yet shows "NO DECISION YET" and "The detector has
+  not decided anything on this call yet."
+
+`web/README.md` has the environment for a live run: `DETECTOR_URL`, a
 `DETECTOR_TOKEN` set to the detector's review token rather than its service
 token, and `DASHBOARD_PASSWORD`.
 
