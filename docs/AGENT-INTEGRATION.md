@@ -274,7 +274,11 @@ you hand-roll it:
   by accident.
 - **`session_end` is the one event a terminal session still accepts.** Send it
   anyway. A session that just stops without a decision is denied server-side,
-  and a session that passes its TTL expires to `deny`.
+  and a session that passes its TTL expires to `deny`. In real mode an
+  `allowed` session also keeps accepting `speech_segment`, so keep posting the
+  callback leg's turns under the same session id and the same running
+  `sequence`: the factors `/v1` reads stay current, and a bad later span still
+  denies.
 
 ### Two speech segments
 
