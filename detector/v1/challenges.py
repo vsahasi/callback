@@ -7,8 +7,19 @@ issued, and turns into its result 700 ms after that receive time. With no user
 turn before it expires it becomes `expired`, reason `no_answer`. A new
 challenge while one is pending supersedes it: `expired`, reason `superseded`.
 
-The result itself is fixed at issue: the scenario's script in mock mode, and
-`failed`/`no_audio` in real mode until the listener exists.
+A digits, phrase or liveness challenge binds only to a turn that is an attempt
+at the answer (`answers`): a stray "okay" or "one moment" between the prompt
+and the answer leaves it pending. An enroll prompt binds the first user turn,
+as it always did: it records a voice, and the turn's clip is what matters.
+
+In mock mode the result is fixed at issue: the scenario's script. In real mode
+a verification challenge `awaits_evidence`: the service settles it as it
+resolves, from whether the bound turn carried the expected words
+(`words_right`, a bool decided at bind time so no text is kept) and the voice
+signals POST /events had measured by then. Until `outcome_fixed` it reads
+`pending`, and once fixed it never changes, so the agent and the policy see
+one result. With nothing heard it stays `failed`/`no_audio`, which the policy
+never counts as a voice fail (ruling F1).
 
 `say` and the expected answer never reach a log line, and `/end` drops both.
 """
@@ -16,7 +27,9 @@ The result itself is fixed at issue: the scenario's script in mock mode, and
 from __future__ import annotations
 
 import random
+import re
 import secrets
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from callback_shared.contract import ChallengeKind, ChallengeState, ChallengeStatus
@@ -76,6 +89,65 @@ FREE_ANSWER_QUESTIONS: tuple[str, ...] = (
 )
 
 _RNG: random.Random = secrets.SystemRandom()
+
+# How speech-to-text spells a digit, and the digit itself.
+_DIGIT_WORDS: dict[str, str] = {
+    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}  # fmt: skip
+# A word (with an inner apostrophe, so "didn't" is one token) or one digit.
+_TOKEN = re.compile(r"[a-z]+(?:'[a-z]+)?|\d")
+
+# What makes a user turn an attempt at the answer rather than a stray remark.
+# Six digits is the shortest answer, so a turn that long is an attempt whatever
+# it says; a shorter one is an attempt when two of its tokens are expected
+# ones. One is not enough: "one moment" hits a digit six times in ten.
+MIN_ANSWER_TOKENS = 6
+MIN_EXPECTED_HITS = 2
+
+
+def _spoken_tokens(text: str) -> list[str]:
+    """Lowercase words and single digits, digit words turned into digits."""
+
+    return [_DIGIT_WORDS.get(match, match) for match in _TOKEN.findall(text.lower())]
+
+
+def words_match(expected: Sequence[str] | None, text: str) -> bool:
+    """Whether the caller's turn carries the expected answer, in order.
+
+    Every expected token has to appear in the spoken tokens as an ordered
+    subsequence; words around them ("sure, ...", "... okay") are allowed, a
+    missing, swapped or wrong token is not. Digits may be spoken ("four") or
+    written ("4", or a run "472913"). An empty expectation never matches,
+    because a challenge always expects something.
+    """
+
+    if not expected:
+        return False
+    spoken = _spoken_tokens(text)
+    position = 0
+    for token in expected:
+        wanted = token.lower()
+        while position < len(spoken) and spoken[position] != wanted:
+            position += 1
+        if position == len(spoken):
+            return False
+        position += 1
+    return True
+
+
+def answers(expected: Sequence[str] | None, text: str) -> bool:
+    """Whether a user turn is an attempt at the answer, right or wrong.
+
+    The first such turn after issue binds the challenge. "okay", "um" and
+    "one moment" are not attempts; six wrong digits are, and fail it.
+    """
+
+    spoken = _spoken_tokens(text)
+    if len(spoken) >= MIN_ANSWER_TOKENS:
+        return True
+    wanted = {token.lower() for token in expected or ()}
+    return sum(1 for token in spoken if token in wanted) >= MIN_EXPECTED_HITS
 
 
 def new_challenge_id() -> str:
@@ -157,6 +229,14 @@ class ChallengeRecord:
     consumed: bool = False
     # Enrollment bookkeeping: the try has been counted.
     settled: bool = False
+    # Real mode, verification kinds: `outcome` is not the result but a
+    # placeholder (no_audio) until the service settles it from the evidence as
+    # the challenge resolves. `resolve` reads pending until `outcome_fixed`.
+    awaits_evidence: bool = False
+    outcome_fixed: bool = False
+    # Whether the bound turn's words matched `expected`, decided when the turn
+    # arrived. Never the words themselves.
+    words_right: bool | None = None
     # The voice measured from this prompt's clip, for an enroll challenge the
     # caller answered with audio. A print, never the audio: the clip is read
     # once, reduced, and dropped. Only ever set for ChallengeKind.ENROLL.
@@ -186,7 +266,7 @@ class ChallengeRecord:
                 )
             return _PENDING
         done_at = self.answered_at + RESOLVE_DELAY_S
-        if now < done_at:
+        if now < done_at or (self.awaits_evidence and not self.outcome_fixed):
             return _PENDING
         return Resolution(
             self.outcome.status,
@@ -196,13 +276,29 @@ class ChallengeRecord:
             resolved_at=done_at,
         )
 
-    def note_user_turn(self, received_at: float) -> None:
-        """The first user turn received after issue and before expiry answers it."""
+    def note_user_turn(self, received_at: float) -> bool:
+        """The first user turn received after issue and before expiry answers it.
+
+        True when this turn is the one that did.
+        """
 
         if self.answered_at is not None or self.superseded_at is not None:
-            return
+            return False
         if self.issued_at <= received_at < self.expires_at:
             self.answered_at = received_at
+            return True
+        return False
+
+    def due_to_settle(self, now: float) -> bool:
+        """Answered, past its 700 ms, and still waiting on the evidence."""
+
+        return (
+            self.awaits_evidence
+            and not self.outcome_fixed
+            and self.answered_at is not None
+            and self.superseded_at is None
+            and now >= self.answered_at + RESOLVE_DELAY_S
+        )
 
     def supersede(self, now: float) -> bool:
         """Expire this challenge if it is still pending. True if it was."""

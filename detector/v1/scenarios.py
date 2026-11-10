@@ -115,8 +115,9 @@ SCRIPTS: Mapping[Scenario, Script] = MappingProxyType(
     }
 )
 
-# Real mode, until the listener exists: no audio, so every challenge fails
-# with no_audio, which never counts as a voice fail.
+# Real mode, before any evidence: a challenge issued with nothing heard fails
+# with no_audio, which never counts as a voice fail. The service replaces it
+# with the measured outcome once /events signals are there at resolution.
 NO_AUDIO_OUTCOME = ChallengeOutcome(ChallengeState.FAILED, None, None, "no_audio")
 
 
